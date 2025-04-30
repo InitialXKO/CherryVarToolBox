@@ -142,18 +142,13 @@ app.post('/v1/chat/completions', async (req, res) => {
     try {
         const originalBody = req.body;
 
-        // 递归处理请求体中的字符串变量
-        async function processObject(obj) {
-            for (const key in obj) {
-                if (typeof obj[key] === 'string') {
-                    obj[key] = await replaceVariables(obj[key]);
-                } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-                    await processObject(obj[key]); // 递归处理嵌套对象
-                }
+        // 只处理 system 角色的第一个消息内容
+        if (originalBody.messages && Array.isArray(originalBody.messages)) {
+            const systemMessage = originalBody.messages.find(msg => msg.role === 'system');
+            if (systemMessage && typeof systemMessage.content === 'string') {
+                systemMessage.content = await replaceVariables(systemMessage.content);
             }
         }
-
-        await processObject(originalBody); // 处理请求体
 
         // 转发请求到 API 服务器
         const response = await fetch(`${apiUrl}/v1/chat/completions`, {
