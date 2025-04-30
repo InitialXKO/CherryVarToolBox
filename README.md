@@ -53,7 +53,7 @@ npm install express node-fetch@2 dotenv node-schedule chinese-lunar-calendar
 *   `{{Today}}`: 当天星期几 (中文)。
 *   `{{Festival}}`: 农历日期、节气和节日。
 *   `{{SystemInfo}}`: `config.env` 中定义的系统信息。
-*   `{{WeatherInfo}}`: 当前缓存的武汉天气预报。
+*   `{{WeatherInfo}}`: 当前缓存的天气预报。
 
 **请求示例:**
 
