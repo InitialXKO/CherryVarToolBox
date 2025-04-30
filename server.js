@@ -22,8 +22,9 @@ const weatherPromptTemplate = process.env.WeatherPrompt;
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
 
-// 中间件：解析 JSON 请求体
-app.use(express.json());
+// 中间件：解析 JSON 和 URL 编码的请求体，增加大小限制以支持大型 Base64 数据
+app.use(express.json({ limit: '100mb' })); // 将 JSON 限制增加到 100MB
+app.use(express.urlencoded({ limit: '100mb', extended: true })); // 将 URL 编码限制增加到 100MB
 
 // 中间件：记录所有传入请求
 app.use((req, res, next) => {
