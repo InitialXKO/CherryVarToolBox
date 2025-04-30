@@ -58,7 +58,8 @@ async function replaceVariables(text) {
     const day = now.getDate();
     const lunarDate = lunarCalendar.getLunar(year, month, day); // 传递年、月、日
     // console.log('Lunar Date Object:', lunarDate); // 移除调试日志
-    let festivalInfo = `${lunarDate.lunarYear}${lunarDate.dateStr}`; // 直接使用 lunarYear 和 dateStr
+    let yearName = lunarDate.lunarYear.replace('年', ''); // 从 '乙巳年' 提取 '乙巳'
+    let festivalInfo = `${yearName}${lunarDate.zodiac}年${lunarDate.dateStr}`; // 拼接成 "乙巳蛇年四月初三"
     if (lunarDate.solarTerm) { // 检查实际的节气属性 solarTerm
         festivalInfo += ` ${lunarDate.solarTerm}`;
     }
