@@ -6,6 +6,7 @@
 
 *   **变量替换**: 拦截发往 `/v1/chat/completions` 的请求，只会拦截系统提示词部分，自动替换请求体 JSON 中字符串值里的特定变量。
 *   **天气获取**: 定时（每天凌晨4点和启动时）通过后端 API 获取天气信息并缓存，供 `{{WeatherInfo}}` 变量使用。
+*   **本地图床**：可以通过 /images/ 路径访问 image/ 目录下的文件，例如 http://<服务器地址>:<端口>/images/LightBackground.png。
 *   **请求转发**: 将处理后的请求转发给配置的后端 API 服务器。
 *   **认证**: 通过简单的 Bearer Token 对客户端请求进行认证。
 
@@ -49,7 +50,9 @@ npm install express node-fetch@2 dotenv node-schedule chinese-lunar-calendar
 
 在发送给中间层服务器的 JSON 请求体字符串中，可以使用以下变量：
 
-*   `{{Date::time}}`: 当前日期和时间 (上海时区)。
+*   `{{Date}}`: 当前日期。
+*   `{{Time}}`: 当前时间。
+*   `{{City}}`: `config.env` 中定义的当前城市。
 *   `{{Today}}`: 当天星期几 (中文)。
 *   `{{Festival}}`: 农历日期、节气和节日。
 *   `{{SystemInfo}}`: `config.env` 中定义的系统信息。
