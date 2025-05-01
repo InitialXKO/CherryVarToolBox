@@ -19,12 +19,19 @@ const systemInfo = process.env.SystemInfo;
 const weatherInfoPath = process.env.WeatherInfo || 'Weather.txt'; // 天气缓存文件路径
 const weatherModel = process.env.WeatherModel;
 const weatherPromptTemplate = process.env.WeatherPrompt;
+const city = process.env.City; // 新增：读取城市变量
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
 
 // 中间件：解析 JSON 和 URL 编码的请求体，增加大小限制以支持大型 Base64 数据
 app.use(express.json({ limit: '100mb' })); // 将 JSON 限制增加到 100MB
 app.use(express.urlencoded({ limit: '100mb', extended: true })); // 将 URL 编码限制增加到 100MB
+
+// --- 提供静态图片文件 ---
+// 使用 express.static 中间件来服务 image 目录下的文件
+// 请求 /images/xxx.png 将会查找 h:/MCP/Cherry-Var/image/xxx.png
+app.use('/images', express.static(path.join(__dirname, 'image')));
+console.log(`图片服务已启动，访问路径: /images`);
 
 // 中间件：记录所有传入请求
 app.use((req, res, next) => {
@@ -45,9 +52,13 @@ async function replaceVariables(text) {
     let processedText = text;
     const now = new Date();
 
-    // {{Date::time}}
-    const dateTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-    processedText = processedText.replace(/\{\{Date::time\}\}/g, dateTime);
+    // {{Date}} - 日期
+    const date = now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    processedText = processedText.replace(/\{\{Date\}\}/g, date);
+
+    // {{Time}} - 时间
+    const time = now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    processedText = processedText.replace(/\{\{Time\}\}/g, time);
 
     // {{Today}}
     const today = now.toLocaleDateString('zh-CN', { weekday: 'long', timeZone: 'Asia/Shanghai' });
@@ -73,6 +84,9 @@ async function replaceVariables(text) {
     // {{WeatherInfo}}
     processedText = processedText.replace(/\{\{WeatherInfo\}\}/g, cachedWeatherInfo || '天气信息不可用');
 
+    // {{City}}
+    processedText = processedText.replace(/\{\{City\}\}/g, city || '未配置城市');
+
     return processedText;
 }
 
@@ -86,10 +100,11 @@ async function fetchAndUpdateWeather() {
     }
 
     try {
-        // 替换 Prompt 中的日期变量
+        // 替换 Prompt 中的变量
         const now = new Date();
-        const dateTime = now.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-        const prompt = weatherPromptTemplate.replace(/\{\{Date::time\}\}/g, dateTime);
+        const date = now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+        let prompt = weatherPromptTemplate.replace(/\{\{Date\}\}/g, date);
+        prompt = prompt.replace(/\{\{City\}\}/g, city || '默认城市'); // 使用读取到的 city 或默认值
 
         const response = await fetch(`${apiUrl}/v1/chat/completions`, {
             method: 'POST',
