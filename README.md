@@ -71,7 +71,7 @@ Authorization: Bearer 123456
   "messages": [
     {
       "role": "system",
-      "content": "今天是 {{Date::time}}，{{Today}}。天气：{{WeatherInfo}}"
+      "content": "今天是 {{Date}}，{{time}}，{{Today}}。天气：{{WeatherInfo}}"
     },
     {
       "role": "user",
