@@ -58,8 +58,10 @@ npm install express node-fetch@2 dotenv node-schedule chinese-lunar-calendar
 *   `{{Festival}}`: 农历日期、节气和节日。
 *   `{{SystemInfo}}`: `config.env` 中定义的系统信息。
 *   `{{WeatherInfo}}`: 当前缓存的天气预报。
+……
+使用如上方式调用ENV中的占位符。
 
-**请求示例:**
+** 请求示例:**
 
 ```
 POST /v1/chat/completions HTTP/1.1
