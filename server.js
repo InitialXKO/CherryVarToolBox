@@ -26,19 +26,28 @@ const emojiDir = path.join(__dirname, 'image', '通用表情包'); // 新增：�
 const xiaoKeEmojiListPath = process.env.小克表情包 || '小克表情包.txt';
 const xiaoJiEmojiListPath = process.env.小吉表情包 || '小吉表情包.txt';
 const xiaoBingEmojiListPath = process.env.小冰表情包 || '小冰表情包.txt';
+const xiaoNaEmojiListPath = process.env.小娜表情包 || '小娜表情包.txt';
+const xiaoYuEmojiListPath = process.env.小雨表情包 || '小雨表情包.txt';
+const xiaoJueEmojiListPath = process.env.小绝表情包 || '小绝表情包.txt';
 const xiaoKeEmojiDir = path.join(__dirname, 'image', '小克表情包');
 const xiaoJiEmojiDir = path.join(__dirname, 'image', '小吉表情包');
 const xiaoBingEmojiDir = path.join(__dirname, 'image', '小冰表情包');
+const xiaoNaEmojiDir = path.join(__dirname, 'image', '小娜表情包');
+const xiaoYuEmojiDir = path.join(__dirname, 'image', '小雨表情包');
+const xiaoJueEmojiDir = path.join(__dirname, 'image', '小绝表情包');
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
 let cachedEmojiList = ''; // 新增：用于缓存表情包列表的变量
 let cachedXiaoKeEmojiList = ''; // 新增：小克表情包列表缓存
 let cachedXiaoJiEmojiList = ''; // 新增：小吉表情包列表缓存
 let cachedXiaoBingEmojiList = ''; // 新增：小冰表情包列表缓存
+let cachedXiaoNaEmojiList = ''; // 新增：小娜表情包列表缓存
+let cachedXiaoYuEmojiList = ''; // 新增：小雨表情包列表缓存
+let cachedXiaoJueEmojiList = ''; // 新增：小绝表情包列表缓存
 
 // 中间件：解析 JSON 和 URL 编码的请求体，增加大小限制以支持大型 Base64 数据
-app.use(express.json({ limit: '100mb' })); // 将 JSON 限制增加到 100MB
-app.use(express.urlencoded({ limit: '100mb', extended: true })); // 将 URL 编码限制增加到 100MB
+app.use(express.json({ limit: '300mb' })); // 将 JSON 限制增加到 300MB
+app.use(express.urlencoded({ limit: '300mb', extended: true })); // 将 URL 编码限制增加到 300MB
 
 // --- 提供静态图片文件 ---
 app.use('/images', express.static(path.join(__dirname, 'image')));
@@ -117,6 +126,15 @@ async function updateAndLoadXiaoJiEmojiList() {
 async function updateAndLoadXiaoBingEmojiList() {
     cachedXiaoBingEmojiList = await updateAndLoadAgentEmojiList('小冰', xiaoBingEmojiDir, xiaoBingEmojiListPath);
 }
+async function updateAndLoadXiaoNaEmojiList() {
+    cachedXiaoNaEmojiList = await updateAndLoadAgentEmojiList('小娜', xiaoNaEmojiDir, xiaoNaEmojiListPath);
+}
+async function updateAndLoadXiaoYuEmojiList() {
+    cachedXiaoYuEmojiList = await updateAndLoadAgentEmojiList('小雨', xiaoYuEmojiDir, xiaoYuEmojiListPath);
+}
+async function updateAndLoadXiaoJueEmojiList() {
+    cachedXiaoJueEmojiList = await updateAndLoadAgentEmojiList('小绝', xiaoJueEmojiDir, xiaoJueEmojiListPath);
+}
 
 // --- 变量替换逻辑 ---
 // 注意：这个函数现在处理所有通用变量，包括 EmojiPrompt
@@ -170,6 +188,15 @@ async function replaceCommonVariables(text) {
     // {{小冰表情包}}
     processedText = processedText.replace(/\{\{小冰表情包\}\}/g, cachedXiaoBingEmojiList || '小冰表情包列表不可用');
 
+    // {{小娜表情包}}
+    processedText = processedText.replace(/\{\{小娜表情包\}\}/g, cachedXiaoNaEmojiList || '小娜表情包列表不可用');
+
+    // {{小雨表情包}}
+    processedText = processedText.replace(/\{\{小雨表情包\}\}/g, cachedXiaoYuEmojiList || '小雨表情包列表不可用');
+
+    // {{小绝表情包}}
+    processedText = processedText.replace(/\{\{小绝表情包\}\}/g, cachedXiaoJueEmojiList || '小绝表情包列表不可用');
+
     // {{EmojiPrompt}} - 动态生成通用 Emoji 提示
     if (processedText.includes('{{EmojiPrompt}}')) {
         let finalEmojiPrompt = '';
@@ -199,7 +226,8 @@ async function fetchAndUpdateWeather() {
         let prompt = weatherPromptTemplate.replace(/\{\{Date\}\}/g, date);
         prompt = prompt.replace(/\{\{City\}\}/g, city || '默认城市'); // 使用读取到的 city 或默认值
 
-        const response = await fetch(`${apiUrl}/v1/chat/completions`, {
+        // --- First API Call ---
+        let response = await fetch(`${apiUrl}/v1/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -208,15 +236,97 @@ async function fetchAndUpdateWeather() {
             body: JSON.stringify({
                 model: weatherModel,
                 messages: [{ role: 'user', content: prompt }],
+                // 使用 OpenAI 兼容格式添加 tools 参数，尝试启用网页搜索
+                tools: [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "google_search", // 使用 google_search 作为工具名，根据用户提供的示例
+                            "description": "Perform a Google search to find information on the web.", // 更新描述以匹配示例
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "The search query."
+                                    }
+                                },
+                                "required": ["query"]
+                            }
+                        }
+                    }
+                ],
+                // OpenAI 风格的 tool_choice，让模型自动选择是否使用工具
+                tool_choice: "auto"
             }),
         });
 
         if (!response.ok) {
-            throw new Error(`获取天气失败: ${response.status} ${response.statusText}`);
+            throw new Error(`第一次天气 API 调用失败: ${response.status} ${response.statusText}`);
         }
 
-        const data = await response.json();
+        let data = await response.json();
+        // Removed Raw data log
+
+        const firstChoice = data.choices?.[0];
+        const message = firstChoice?.message;
+
+        // --- Check for Tool Calls ---
+        if (firstChoice?.finish_reason === 'tool_calls' && message?.tool_calls) {
+            // Removed log marker
+            const toolCalls = message.tool_calls;
+
+            // Prepare messages for the second API call
+            const messagesForSecondCall = [
+                { role: 'user', content: prompt }, // Original user prompt
+                message, // Assistant's message requesting tool call(s)
+            ];
+
+            // Add tool results (we assume the proxy handles execution, send back arguments as placeholder result)
+            for (const toolCall of toolCalls) {
+                 if (toolCall.type === 'function' && toolCall.function.name === 'google_search') {
+                     // Removed tool result log
+                     messagesForSecondCall.push({
+                         role: 'tool',
+                         tool_call_id: toolCall.id,
+                         // Since server.js doesn't execute the search, we send back the arguments
+                         // The proxy at localhost:3000 should ideally use this or have already executed it.
+                         content: `Tool call requested with arguments: ${toolCall.function.arguments}`,
+                     });
+                 }
+            }
+
+            // --- Second API Call ---
+            // Removed log marker
+            response = await fetch(`${apiUrl}/v1/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                },
+                // Send the history including the tool call request and our constructed tool result
+                // DO NOT send 'tools' or 'tool_choice' in the second call
+                body: JSON.stringify({
+                    model: weatherModel,
+                    messages: messagesForSecondCall,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`第二次天气 API 调用失败: ${response.status} ${response.statusText}`);
+            }
+
+            data = await response.json();
+            // Removed Raw data log
+        } else {
+             // Removed log marker
+        }
+
+        // --- Process Final Response ---
         let weatherContent = data.choices?.[0]?.message?.content || '';
+        console.log('Final extracted content:', weatherContent); // Keep log for final content
+        // Removed log marker
+
         const match = weatherContent.match(/\[WeatherInfo:(.*?)\]/s); // 使用 s 标志使 . 匹配换行符
         if (match && match[1]) {
             cachedWeatherInfo = match[1].trim();
@@ -320,6 +430,9 @@ async function initialize() {
     await updateAndLoadXiaoKeEmojiList();   // 小克
     await updateAndLoadXiaoJiEmojiList();   // 小吉
     await updateAndLoadXiaoBingEmojiList(); // 小冰
+    await updateAndLoadXiaoNaEmojiList();   // 小娜
+    await updateAndLoadXiaoYuEmojiList();   // 小雨
+    await updateAndLoadXiaoJueEmojiList();  // 小绝
 
     // 启动时尝试加载一次缓存的天气信息
     try {
