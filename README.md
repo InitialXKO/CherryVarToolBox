@@ -31,7 +31,7 @@
 在项目根目录下打开终端，运行以下命令安装依赖：
 
 ```bash
-npm install express node-fetch@2 dotenv node-schedule chinese-lunar-calendar
+npm install
 ```
 
 ## 运行
