@@ -82,3 +82,14 @@ Authorization: Bearer 123456
     }
   ]
 }
+
+
+** 日记创建实例： **
+
+``` DailyNote
+<<<DailyNoteStart>>>
+Maid: 小克
+Date: 2025.5.3
+Content:今天和主人聊天超开心喵，所以要写日记！
+<<<DailyNoteEnd>>>
+```
