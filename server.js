@@ -6,6 +6,7 @@ const schedule = require('node-schedule');
 const lunarCalendar = require('chinese-lunar-calendar'); // 导入整个模块
 const fs = require('fs').promises; // 使用 fs.promises 进行异步文件操作
 const path = require('path');
+const { Writable } = require('stream'); // 引入 Writable 用于收集流数据
 
 // 加载环境变量
 dotenv.config({ path: 'config.env' });
@@ -35,6 +36,7 @@ const xiaoBingEmojiDir = path.join(__dirname, 'image', '小冰表情包');
 const xiaoNaEmojiDir = path.join(__dirname, 'image', '小娜表情包');
 const xiaoYuEmojiDir = path.join(__dirname, 'image', '小雨表情包');
 const xiaoJueEmojiDir = path.join(__dirname, 'image', '小绝表情包');
+const userInfo = process.env.User; // 新增：读取用户变量
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
 let cachedEmojiList = ''; // 新增：用于缓存表情包列表的变量
@@ -179,7 +181,10 @@ async function replaceCommonVariables(text) {
     // {{City}}
     processedText = processedText.replace(/\{\{City\}\}/g, city || '未配置城市');
 
-    // {{小克表情包}}
+    // {{User}}
+    processedText = processedText.replace(/\{\{User\}\}/g, userInfo || '未配置用户信息');
+
+   // {{小克表情包}}
     processedText = processedText.replace(/\{\{小克表情包\}\}/g, cachedXiaoKeEmojiList || '小克表情包列表不可用');
 
     // {{小吉表情包}}
@@ -348,6 +353,72 @@ async function fetchAndUpdateWeather() {
     }
 }
 
+// --- 日记处理函数 ---
+// --- 修改：handleDailyNote 处理新的结构化格式 ---
+async function handleDailyNote(noteBlockContent) {
+    // console.log('[handleDailyNote] 开始处理新的结构化日记块...');
+    const lines = noteBlockContent.trim().split('\n');
+    let maidName = null;
+    let dateString = null;
+    let contentLines = [];
+    let isContentSection = false;
+
+    for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (trimmedLine.startsWith('Maid:')) {
+            maidName = trimmedLine.substring(5).trim();
+            isContentSection = false; // 遇到新 Key，重置 Content 标记
+        } else if (trimmedLine.startsWith('Date:')) {
+            dateString = trimmedLine.substring(5).trim();
+            isContentSection = false;
+        } else if (trimmedLine.startsWith('Content:')) {
+            isContentSection = true;
+            // 如果 Content: 后面同一行有内容，也算进去
+            const firstContentPart = trimmedLine.substring(8).trim();
+            if (firstContentPart) {
+                contentLines.push(firstContentPart);
+            }
+        } else if (isContentSection) {
+            // Content: 之后的所有行都属于内容
+            contentLines.push(line); // 保留原始行的缩进和格式
+        }
+    }
+
+    const contentText = contentLines.join('\n').trim(); // 组合内容并去除首尾空白
+
+    if (!maidName || !dateString || !contentText) {
+        console.error('[handleDailyNote] 无法从日记块中完整提取 Maid, Date, 或 Content:', { maidName, dateString, contentText: contentText.substring(0,100)+ '...' });
+        return;
+    }
+
+    // console.log(`[handleDailyNote] 提取信息: Maid=${maidName}, Date=${dateString}`);
+    const datePart = dateString.replace(/[.-]/g, '.'); // 统一日期分隔符
+    const fileName = `${datePart}.txt`; // 文件名只包含日期
+    const dirPath = path.join(__dirname, 'dailynote', maidName);
+    const filePath = path.join(dirPath, fileName);
+
+    // console.log(`[handleDailyNote] 准备写入日记: 目录=${dirPath}, 文件名=${fileName}`);
+    // console.log(`[handleDailyNote] 日记文本内容 (前100字符): ${contentText.substring(0, 100)}...`);
+
+    try {
+        // console.log(`[handleDailyNote] 尝试创建目录: ${dirPath}`);
+        await fs.mkdir(dirPath, { recursive: true });
+        // console.log(`[handleDailyNote] 目录已确保存在或已存在: ${dirPath}`);
+
+        // console.log(`[handleDailyNote] 尝试写入文件: ${filePath}`);
+        await fs.writeFile(filePath, `[${datePart}]\n${contentText}`); // 在内容前只添加 [日期] 头
+        console.log(`[handleDailyNote] 日记文件写入成功: ${filePath}`); // 简化成功日志
+    } catch (error) {
+        console.error(`[handleDailyNote] 处理日记文件 ${filePath} 时捕获到错误:`);
+        console.error(`  错误代码 (code): ${error.code}`);
+        console.error(`  系统调用 (syscall): ${error.syscall}`);
+        console.error(`  路径 (path): ${error.path}`);
+        console.error(`  错误号 (errno): ${error.errno}`);
+        console.error(`  错误信息 (message): ${error.message}`);
+        console.error(`  错误堆栈 (stack): ${error.stack}`);
+    }
+}
+
 // --- 代理路由 ---
 app.post('/v1/chat/completions', async (req, res) => {
     try {
@@ -407,8 +478,81 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
         });
 
-        // 将 API 服务器的响应体流式传输回客户端
-        response.body.pipe(res);
+        // --- 修改开始：恢复流式转发，同时在服务器端缓存以供检查 ---
+        const chunks = []; // 用于在服务器端缓存响应
+
+        // 监听数据块
+        response.body.on('data', (chunk) => {
+            chunks.push(chunk); // 缓存数据块
+            res.write(chunk);   // 同时将数据块流式转发给客户端
+        });
+
+        // 监听流结束
+        response.body.on('end', () => {
+            res.end(); // 结束客户端的响应流
+
+            // --- 在流结束后处理日记 (修改：先处理 SSE) ---
+            const responseBuffer = Buffer.concat(chunks);
+            const responseString = responseBuffer.toString('utf-8');
+            // console.log('[DailyNote Check] 原始响应字符串 (前10000字符):', responseString.substring(0, 10000)); // Commented out raw string log
+
+            let fullAiResponseText = '';
+            const lines = responseString.trim().split('\n');
+
+            // Step 1: 从 SSE 流中提取并拼接内容
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const jsonData = line.substring(5).trim();
+                    if (jsonData === '[DONE]') continue; // 跳过 SSE 结束信号
+                    try {
+                        const parsedData = JSON.parse(jsonData);
+                        // 提取流式响应中的内容片段 (兼容 delta 和 message 格式)
+                        const contentChunk = parsedData.choices?.[0]?.delta?.content || parsedData.choices?.[0]?.message?.content || '';
+                        if (contentChunk) {
+                            fullAiResponseText += contentChunk;
+                        }
+                    } catch (e) {
+                        // 忽略无法解析为 JSON 的行
+                        // console.warn('Skipping non-JSON SSE data line:', line);
+                    }
+                }
+                // 备选：如果 API 可能返回非 SSE 纯文本，可以在这里添加处理逻辑
+                // else if (!line.startsWith(':') && line.trim() !== '') {
+                //     fullAiResponseText += line + '\n';
+                // }
+            }
+
+            // console.log('[DailyNote Check] 拼接后的 AI 回复文本 (前10000字符):', fullAiResponseText.substring(0, 10000)); // Commented out extracted text log
+
+            // Step 2: 在拼接后的干净文本上匹配日记标记
+            const dailyNoteRegex = /<<<DailyNoteStart>>>(.*?)<<<DailyNoteEnd>>>/s; // 使用严格的正则
+            // console.log('[DailyNote Check] 在拼接文本上使用正则表达式:', dailyNoteRegex); // Commented out regex log
+            const match = fullAiResponseText.match(dailyNoteRegex);
+
+            if (match && match[1]) {
+                const noteBlockContent = match[1].trim(); // 提取并去除首尾空白
+                console.log('[DailyNote Check] 找到结构化日记标记，准备处理...'); // 简化找到标记的日志
+                // 异步处理日记保存
+                handleDailyNote(noteBlockContent).catch(err => {
+                    console.error("处理结构化日记时发生未捕获错误:", err);
+                });
+            } else {
+                 console.log('[DailyNote Check] 未找到结构化日记标记。'); // 简化未找到标记的日志
+            }
+            // --- 日记处理逻辑修改结束 ---
+
+            // 原有的 JSON 解析逻辑已被包含在上面的 SSE 处理中或不再需要，故移除/注释
+        });
+
+        // 监听流错误
+        response.body.on('error', (err) => {
+            console.error('API 响应流错误:', err);
+            // 尝试结束响应，如果尚未结束
+            if (!res.writableEnded) {
+                res.status(500).end('API response stream error');
+            }
+        });
+        // --- 修改结束 ---
 
     } catch (error) {
         console.error('处理请求或转发时出错:', error);
