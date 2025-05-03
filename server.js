@@ -212,6 +212,66 @@ async function replaceCommonVariables(text) {
         processedText = processedText.replace(/\{\{EmojiPrompt\}\}/g, finalEmojiPrompt);
     }
 
+// --- 处理 {{角色名日记本}} 占位符 ---
+    const diaryPlaceholderRegex = /\{\{(.+?)日记本\}\}/g;
+    // 使用一个临时变量来处理替换，避免在循环中修改正在迭代的字符串导致问题
+    let tempProcessedText = processedText;
+    const diaryMatches = tempProcessedText.matchAll(diaryPlaceholderRegex);
+
+    // 使用 Set 存储已处理的角色名，避免重复读取同一角色的日记
+    const processedCharacters = new Set();
+
+    for (const match of diaryMatches) {
+        const placeholder = match[0]; // e.g., {{小克日记本}}
+        const characterName = match[1]; // e.g., 小克
+
+        // 如果已处理过这个角色，跳过，因为 replaceAll 会处理所有实例
+        if (processedCharacters.has(characterName)) {
+            continue;
+        }
+
+        const diaryDirPath = path.join(__dirname, 'dailynote', characterName);
+        let diaryContent = `[${characterName}日记本内容为空或不存在]`; // 默认内容
+
+        try {
+            const files = await fs.readdir(diaryDirPath);
+            const txtFiles = files.filter(file => file.toLowerCase().endsWith('.txt'));
+            // 按文件名（日期）排序，让日记按时间顺序排列
+            txtFiles.sort();
+
+            if (txtFiles.length > 0) {
+                const fileContents = await Promise.all(
+                    txtFiles.map(async (file) => {
+                        const filePath = path.join(diaryDirPath, file);
+                        try {
+                            // 读取文件内容
+                            const fileData = await fs.readFile(filePath, 'utf-8');
+                            // 返回文件名（日期）和内容，方便后续格式化
+                            return fileData; // 文件内容已包含 [日期] 头
+                        } catch (readErr) {
+                            console.error(`读取日记文件 ${filePath} 失败:`, readErr);
+                            return `[读取文件 ${file} 失败]`; // 指示特定文件的错误
+                        }
+                    })
+                );
+                // 使用分隔符连接所有日记内容
+                diaryContent = fileContents.join('\n\n---\n\n'); // 使用醒目的分隔符
+            }
+        } catch (error) {
+            if (error.code !== 'ENOENT') { // ENOENT (目录未找到) 由默认消息处理
+                console.error(`读取 ${characterName} 日记目录 ${diaryDirPath} 出错:`, error);
+                diaryContent = `[读取${characterName}日记时出错]`;
+            }
+            // 如果是 ENOENT，则保持默认消息
+        }
+        // 替换所有该角色的日记本占位符
+        tempProcessedText = tempProcessedText.replaceAll(placeholder, diaryContent);
+        // 标记该角色已处理
+        processedCharacters.add(characterName);
+    }
+    // 将处理完日记占位符的结果赋回
+    processedText = tempProcessedText;
+    // --- 日记本占位符处理结束 ---
     return processedText;
 }
 
