@@ -58,6 +58,7 @@ npm install
 *   `{{Festival}}`: 农历日期、节气和节日。
 *   `{{SystemInfo}}`: `config.env` 中定义的系统信息。
 *   `{{WeatherInfo}}`: 当前缓存的天气预报。
+*   `{{XX日记本}}`: 调用单个智能体所有长期记忆。
 *   ……
 *   使用如上方式调用ENV中的占位符。
 
