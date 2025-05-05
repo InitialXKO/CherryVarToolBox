@@ -493,7 +493,7 @@ async function handleDailyNote(noteBlockContent) {
 
         // 使用找到的最终文件名写入文件
         // console.log(`[handleDailyNote] 最终尝试写入文件: ${filePath}`);
-        await fs.writeFile(filePath, `[${datePart}]\n${contentText}`); // 在内容前只添加 [日期] 头
+        await fs.writeFile(filePath, `[${datePart}] - ${maidName}\n${contentText}`); // 在内容前添加 [日期] - 署名 头
         console.log(`[handleDailyNote] 日记文件写入成功: ${filePath}`); // 记录最终写入的文件路径
     } catch (error) {
         // 保持现有的详细错误日志记录
