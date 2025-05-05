@@ -34,8 +34,7 @@
 *   `WeatherPrompt`: 获取天气时发送给模型的提示语模板 (支持 `{{Date}}`, `{{City}}` 变量)。
 *   `User`: 自定义用户信息变量 (`{{User}}`) 的值。
 *   `EmojiPrompt`: 表情包使用说明的提示语模板 (支持 `{{EmojiList}}` 变量)。
-*   `EmojiList`: 通用表情包列表文件的路径 (默认为 `EmojiList.txt`)。
-*   `角色名表情包`: 特定角色表情包列表文件的路径 (例如 `小克表情包=小克表情包.txt`)。
+*   `角色名表情包`: 特定角色表情包列表文件的路径 (例如 `xx表情包=xx表情包.txt`)。
 *   `DetectorX`: 需要被检测和替换的系统提示词片段 (X为数字，例如 `Detector1`)。
 *   `Detector_OutputX`: 用于替换 `DetectorX` 的目标文本 (X为对应数字，例如 `Detector_Output1`)。
 
