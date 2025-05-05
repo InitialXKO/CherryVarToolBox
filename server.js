@@ -572,37 +572,71 @@ app.post('/v1/chat/completions', async (req, res) => {
             // console.log('[DailyNote Check] 原始响应字符串 (前10000字符):', responseString.substring(0, 10000)); // Commented out raw string log
 
             let fullAiResponseText = '';
-            const lines = responseString.trim().split('\n');
+            let successfullyParsed = false;
 
-            // Step 1: 从 SSE 流中提取并拼接内容
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const jsonData = line.substring(5).trim();
-                    if (jsonData === '[DONE]') continue; // 跳过 SSE 结束信号
-                    try {
-                        const parsedData = JSON.parse(jsonData);
-                        // 提取流式响应中的内容片段 (兼容 delta 和 message 格式)
-                        const contentChunk = parsedData.choices?.[0]?.delta?.content || parsedData.choices?.[0]?.message?.content || '';
-                        if (contentChunk) {
-                            fullAiResponseText += contentChunk;
+            // --- Step 1: 尝试解析为 SSE 流 ---
+            const lines = responseString.trim().split('\n');
+            let sseContent = '';
+            // 检查是否可能是 SSE 流 (至少包含 'data: ' 行)
+            const looksLikeSSE = lines.some(line => line.startsWith('data: '));
+
+            if (looksLikeSSE) {
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const jsonData = line.substring(5).trim();
+                        if (jsonData === '[DONE]') continue;
+                        try {
+                            const parsedData = JSON.parse(jsonData);
+                            const contentChunk = parsedData.choices?.[0]?.delta?.content || parsedData.choices?.[0]?.message?.content || '';
+                            if (contentChunk) {
+                                sseContent += contentChunk;
+                            }
+                        } catch (e) {
+                            // 忽略无法解析的行, 可能是非 JSON 数据或注释
                         }
-                    } catch (e) {
-                        // 忽略无法解析为 JSON 的行
-                        // console.warn('Skipping non-JSON SSE data line:', line);
                     }
                 }
-                // 备选：如果 API 可能返回非 SSE 纯文本，可以在这里添加处理逻辑
-                // else if (!line.startsWith(':') && line.trim() !== '') {
-                //     fullAiResponseText += line + '\n';
-                // }
+                if (sseContent) {
+                    fullAiResponseText = sseContent;
+                    successfullyParsed = true;
+                    console.log('[DailyNote Check] 成功从 SSE 流中提取内容。');
+                }
             }
 
-            // console.log('[DailyNote Check] 拼接后的 AI 回复文本 (前10000字符):', fullAiResponseText.substring(0, 10000)); // Commented out extracted text log
+            // --- Step 2: 如果不是 SSE 或 SSE 解析未提取到内容，尝试解析为 JSON ---
+            if (!successfullyParsed) {
+                try {
+                    const parsedJson = JSON.parse(responseString);
+                    // 尝试从标准 OpenAI 格式提取内容
+                    const jsonContent = parsedJson.choices?.[0]?.message?.content;
+                    if (jsonContent && typeof jsonContent === 'string') {
+                        fullAiResponseText = jsonContent;
+                        successfullyParsed = true;
+                        console.log('[DailyNote Check] 成功从 JSON 响应中提取内容。');
+                    } else {
+                        console.warn('[DailyNote Check] JSON 响应格式不符合预期，无法提取 message.content。');
+                    }
+                } catch (e) {
+                    // 只有在看起来不像 SSE 的情况下才记录这个警告，避免 SSE 流结束时的 [DONE] 导致误报
+                    if (!looksLikeSSE) {
+                        console.warn('[DailyNote Check] 响应不是有效的 JSON 对象。无法提取内容。原始响应 (前500字符):', responseString.substring(0, 500));
+                    } else {
+                        // 如果看起来像 SSE 但 sseContent 为空，说明可能只有 [DONE] 或无效数据
+                        console.log('[DailyNote Check] SSE 流解析未提取到有效内容。');
+                    }
+                }
+            }
 
-            // Step 2: 在拼接后的干净文本上匹配日记标记
-            const dailyNoteRegex = /<<<DailyNoteStart>>>(.*?)<<<DailyNoteEnd>>>/s; // 使用严格的正则
-            // console.log('[DailyNote Check] 在拼接文本上使用正则表达式:', dailyNoteRegex); // Commented out regex log
-            const match = fullAiResponseText.match(dailyNoteRegex);
+            // --- Step 3: 在提取到的文本上匹配日记标记 ---
+            let match = null; // 初始化 match 为 null
+            if (successfullyParsed && fullAiResponseText) {
+                // console.log('[DailyNote Check] 提取到的 AI 回复文本 (前10000字符):', fullAiResponseText.substring(0, 10000));
+                const dailyNoteRegex = /<<<DailyNoteStart>>>(.*?)<<<DailyNoteEnd>>>/s;
+                // console.log('[DailyNote Check] 在提取文本上使用正则表达式:', dailyNoteRegex);
+                match = fullAiResponseText.match(dailyNoteRegex); // 在这里进行匹配
+            } else if (!successfullyParsed) {
+                console.log('[DailyNote Check] 未能成功解析响应内容，跳过日记标记检查。');
+            }
 
             if (match && match[1]) {
                 const noteBlockContent = match[1].trim(); // 提取并去除首尾空白
