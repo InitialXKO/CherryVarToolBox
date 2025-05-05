@@ -46,30 +46,10 @@ const weatherModel = process.env.WeatherModel;
 const weatherPromptTemplate = process.env.WeatherPrompt;
 const city = process.env.City; // 新增：读取城市变量
 const emojiPromptTemplate = process.env.EmojiPrompt; // 新增：读取表情包提示模板
-const emojiListPath = process.env.EmojiList || 'EmojiList.txt'; // 新增：读取表情包列表文件路径
-const emojiDir = path.join(__dirname, 'image', '通用表情包'); // 新增：表情包目录路径
-const xiaoKeEmojiListPath = process.env.小克表情包 || '小克表情包.txt';
-const xiaoJiEmojiListPath = process.env.小吉表情包 || '小吉表情包.txt';
-const xiaoBingEmojiListPath = process.env.小冰表情包 || '小冰表情包.txt';
-const xiaoNaEmojiListPath = process.env.小娜表情包 || '小娜表情包.txt';
-const xiaoYuEmojiListPath = process.env.小雨表情包 || '小雨表情包.txt';
-const xiaoJueEmojiListPath = process.env.小绝表情包 || '小绝表情包.txt';
-const xiaoKeEmojiDir = path.join(__dirname, 'image', '小克表情包');
-const xiaoJiEmojiDir = path.join(__dirname, 'image', '小吉表情包');
-const xiaoBingEmojiDir = path.join(__dirname, 'image', '小冰表情包');
-const xiaoNaEmojiDir = path.join(__dirname, 'image', '小娜表情包');
-const xiaoYuEmojiDir = path.join(__dirname, 'image', '小雨表情包');
-const xiaoJueEmojiDir = path.join(__dirname, 'image', '小绝表情包');
 const userInfo = process.env.User; // 新增：读取用户变量
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
-let cachedEmojiList = ''; // 新增：用于缓存表情包列表的变量
-let cachedXiaoKeEmojiList = ''; // 新增：小克表情包列表缓存
-let cachedXiaoJiEmojiList = ''; // 新增：小吉表情包列表缓存
-let cachedXiaoBingEmojiList = ''; // 新增：小冰表情包列表缓存
-let cachedXiaoNaEmojiList = ''; // 新增：小娜表情包列表缓存
-let cachedXiaoYuEmojiList = ''; // 新增：小雨表情包列表缓存
-let cachedXiaoJueEmojiList = ''; // 新增：小绝表情包列表缓存
+const cachedEmojiLists = new Map(); // 使用 Map 存储所有表情包列表缓存
 
 // 中间件：解析 JSON 和 URL 编码的请求体，增加大小限制以支持大型 Base64 数据
 app.use(express.json({ limit: '300mb' })); // 将 JSON 限制增加到 300MB
@@ -139,29 +119,6 @@ async function updateAndLoadAgentEmojiList(agentName, dirPath, filePath) {
     return errorMessage; // 返回生成的列表或错误信息或旧列表
 }
 
-// --- 特定表情包列表的更新函数 ---
-async function updateAndLoadGeneralEmojiList() {
-    cachedEmojiList = await updateAndLoadAgentEmojiList('通用', emojiDir, emojiListPath);
-}
-async function updateAndLoadXiaoKeEmojiList() {
-    cachedXiaoKeEmojiList = await updateAndLoadAgentEmojiList('小克', xiaoKeEmojiDir, xiaoKeEmojiListPath);
-}
-async function updateAndLoadXiaoJiEmojiList() {
-    cachedXiaoJiEmojiList = await updateAndLoadAgentEmojiList('小吉', xiaoJiEmojiDir, xiaoJiEmojiListPath);
-}
-async function updateAndLoadXiaoBingEmojiList() {
-    cachedXiaoBingEmojiList = await updateAndLoadAgentEmojiList('小冰', xiaoBingEmojiDir, xiaoBingEmojiListPath);
-}
-async function updateAndLoadXiaoNaEmojiList() {
-    cachedXiaoNaEmojiList = await updateAndLoadAgentEmojiList('小娜', xiaoNaEmojiDir, xiaoNaEmojiListPath);
-}
-async function updateAndLoadXiaoYuEmojiList() {
-    cachedXiaoYuEmojiList = await updateAndLoadAgentEmojiList('小雨', xiaoYuEmojiDir, xiaoYuEmojiListPath);
-}
-async function updateAndLoadXiaoJueEmojiList() {
-    cachedXiaoJueEmojiList = await updateAndLoadAgentEmojiList('小绝', xiaoJueEmojiDir, xiaoJueEmojiListPath);
-}
-
 // --- 变量替换逻辑 ---
 // 注意：这个函数现在处理所有通用变量，包括 EmojiPrompt
 async function replaceCommonVariables(text) {
@@ -208,33 +165,28 @@ async function replaceCommonVariables(text) {
     // {{User}}
     processedText = processedText.replace(/\{\{User\}\}/g, userInfo || '未配置用户信息');
 
-   // {{小克表情包}}
-    processedText = processedText.replace(/\{\{小克表情包\}\}/g, cachedXiaoKeEmojiList || '小克表情包列表不可用');
+   // --- 动态处理 {{xx表情包}} 占位符 ---
+   const emojiPlaceholderRegex = /\{\{(.+?表情包)\}\}/g;
+   let emojiMatch;
+   while ((emojiMatch = emojiPlaceholderRegex.exec(processedText)) !== null) {
+       const placeholder = emojiMatch[0]; // e.g., {{小克表情包}}
+       const emojiName = emojiMatch[1]; // e.g., 小克表情包
+       const emojiList = cachedEmojiLists.get(emojiName);
+       processedText = processedText.replaceAll(placeholder, emojiList || `${emojiName}列表不可用`);
+   }
 
-    // {{小吉表情包}}
-    processedText = processedText.replace(/\{\{小吉表情包\}\}/g, cachedXiaoJiEmojiList || '小吉表情包列表不可用');
-
-    // {{小冰表情包}}
-    processedText = processedText.replace(/\{\{小冰表情包\}\}/g, cachedXiaoBingEmojiList || '小冰表情包列表不可用');
-
-    // {{小娜表情包}}
-    processedText = processedText.replace(/\{\{小娜表情包\}\}/g, cachedXiaoNaEmojiList || '小娜表情包列表不可用');
-
-    // {{小雨表情包}}
-    processedText = processedText.replace(/\{\{小雨表情包\}\}/g, cachedXiaoYuEmojiList || '小雨表情包列表不可用');
-
-    // {{小绝表情包}}
-    processedText = processedText.replace(/\{\{小绝表情包\}\}/g, cachedXiaoJueEmojiList || '小绝表情包列表不可用');
-
-    // {{EmojiPrompt}} - 动态生成通用 Emoji 提示
-    if (processedText.includes('{{EmojiPrompt}}')) {
-        let finalEmojiPrompt = '';
-        if (emojiPromptTemplate) {
-            finalEmojiPrompt = emojiPromptTemplate.replace(/\{\{EmojiList\}\}/g, cachedEmojiList || '表情包列表不可用');
-        }
-        // 使用正则表达式进行全局替换，以防模板中出现多个 {{EmojiPrompt}}
-        processedText = processedText.replace(/\{\{EmojiPrompt\}\}/g, finalEmojiPrompt);
-    }
+   // {{EmojiPrompt}} - 动态生成通用 Emoji 提示 (现在依赖于 {{通用表情包}} 占位符)
+   if (processedText.includes('{{EmojiPrompt}}')) {
+       let finalEmojiPrompt = '';
+       if (emojiPromptTemplate) {
+           // EmojiPrompt 模板现在应该包含 {{通用表情包}}
+           // 我们需要先替换掉 EmojiPrompt 模板内的 {{通用表情包}}
+           const generalEmojiList = cachedEmojiLists.get('通用表情包');
+           finalEmojiPrompt = emojiPromptTemplate.replace(/\{\{通用表情包\}\}/g, generalEmojiList || '通用表情包列表不可用');
+       }
+       // 使用正则表达式进行全局替换，以防原始文本中出现多个 {{EmojiPrompt}}
+       processedText = processedText.replace(/\{\{EmojiPrompt\}\}/g, finalEmojiPrompt);
+   }
 
 // --- 处理 {{角色名日记本}} 占位符 ---
     const diaryPlaceholderRegex = /\{\{(.+?)日记本\}\}/g;
@@ -692,14 +644,38 @@ app.post('/v1/chat/completions', async (req, res) => {
 
 // --- 初始化和定时任务 ---
 async function initialize() {
-    // 启动时更新并加载所有表情包列表
-    await updateAndLoadGeneralEmojiList(); // 通用
-    await updateAndLoadXiaoKeEmojiList();   // 小克
-    await updateAndLoadXiaoJiEmojiList();   // 小吉
-    await updateAndLoadXiaoBingEmojiList(); // 小冰
-    await updateAndLoadXiaoNaEmojiList();   // 小娜
-    await updateAndLoadXiaoYuEmojiList();   // 小雨
-    await updateAndLoadXiaoJueEmojiList();  // 小绝
+   console.log('开始初始化表情包列表...');
+   const imageDir = path.join(__dirname, 'image');
+   try {
+       const entries = await fs.readdir(imageDir, { withFileTypes: true });
+       const emojiDirs = entries.filter(entry => entry.isDirectory() && entry.name.endsWith('表情包'));
+
+       if (emojiDirs.length === 0) {
+           console.warn(`警告: 在 ${imageDir} 目录下未找到任何以 '表情包' 结尾的文件夹。`);
+       } else {
+           console.log(`找到 ${emojiDirs.length} 个表情包目录，开始加载...`);
+           // 使用 Promise.all 并行加载所有表情包列表
+           await Promise.all(emojiDirs.map(async (dirEntry) => {
+               const emojiName = dirEntry.name; // e.g., "通用表情包", "小克表情包"
+               const dirPath = path.join(imageDir, emojiName);
+               const filePath = path.join(__dirname, `${emojiName}.txt`); // 列表文件放在根目录
+               console.log(`正在处理 ${emojiName}... 目录: ${dirPath}, 列表文件: ${filePath}`);
+               try {
+                   const listContent = await updateAndLoadAgentEmojiList(emojiName, dirPath, filePath);
+                   cachedEmojiLists.set(emojiName, listContent); // 缓存列表内容
+                   console.log(`${emojiName} 列表已加载并缓存。`);
+               } catch (loadError) {
+                   console.error(`加载 ${emojiName} 列表时出错:`, loadError);
+                   cachedEmojiLists.set(emojiName, `${emojiName}列表加载失败`); // 缓存错误信息
+               }
+           }));
+           console.log('所有表情包列表加载完成。');
+       }
+   } catch (error) {
+       console.error(`读取 image 目录 ${imageDir} 时出错:`, error);
+   }
+   console.log('表情包列表初始化结束。');
+
 
     // 启动时尝试加载一次缓存的天气信息
     try {
