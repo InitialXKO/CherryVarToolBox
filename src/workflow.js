@@ -476,10 +476,16 @@ async function generateReport() {
             { role: 'user', content: finalReportContext }
         ];
 
-        console.log(`Calling API (${thinkModel}) for report generation with potential search...`);
-        // 使用新的辅助函数调用 ThinkModel，允许搜索
+        console.log(`Calling API (${thinkModel}) for report generation (Search Tool Disabled)...`); // 更新日志信息
+        // 直接调用 apiHelper，并明确禁用搜索工具
         // 允许较长的报告生成时间
-        const reportReply = await callThinkModelWithSearchHandling(reportMessages, thinkModelTemp, thinkModelMaxTokens * 2);
+        const reportReply = await apiHelper.callApi(
+            thinkModel,
+            reportMessages,
+            thinkModelTemp,
+            thinkModelMaxTokens * 2, // 保持较大的 maxTokens
+            false // <--- 明确禁用搜索工具
+        );
 
         if (reportReply.type === 'content') {
             console.log('Successfully generated report (potentially after search).');
