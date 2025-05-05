@@ -11,6 +11,30 @@ const { Writable } = require('stream'); // 引入 Writable 用于收集流数据
 // 加载环境变量
 dotenv.config({ path: 'config.env' });
 
+// --- 读取系统提示词转换规则 ---
+const detectors = [];
+for (const key in process.env) {
+    if (/^Detector\d+$/.test(key)) {
+        const index = key.substring(8); // 获取数字部分
+        const outputKey = `Detector_Output${index}`;
+        if (process.env[outputKey]) {
+            detectors.push({
+                detector: process.env[key],
+                output: process.env[outputKey]
+            });
+            console.log(`加载转换规则: "${process.env[key]}" -> "${process.env[outputKey]}"`);
+        } else {
+            console.warn(`警告: 找到 ${key} 但未找到对应的 ${outputKey}`);
+        }
+    }
+}
+if (detectors.length > 0) {
+    console.log(`共加载了 ${detectors.length} 条系统提示词转换规则。`);
+} else {
+    console.log('未加载任何系统提示词转换规则。');
+}
+// --- 转换规则读取结束 ---
+
 const app = express();
 const port = process.env.PORT; // 从 env 或默认值获取端口
 const apiKey = process.env.API_Key; // API 服务器密钥
@@ -272,6 +296,17 @@ async function replaceCommonVariables(text) {
     // 将处理完日记占位符的结果赋回
     processedText = tempProcessedText;
     // --- 日记本占位符处理结束 ---
+
+    // --- 系统提示词转换 ---
+    for (const rule of detectors) {
+        // 确保 detector 和 output 都是字符串，并且 detector 不为空
+        if (typeof rule.detector === 'string' && rule.detector.length > 0 && typeof rule.output === 'string') {
+             // 使用 replaceAll 进行全局替换
+             processedText = processedText.replaceAll(rule.detector, rule.output);
+        }
+    }
+    // --- 系统提示词转换结束 ---
+
     return processedText;
 }
 
