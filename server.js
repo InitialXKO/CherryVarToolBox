@@ -43,6 +43,30 @@ if (detectors.length > 0) {
 }
 // --- 转换规则读取结束 ---
 
+// --- 读取全局上下文转换规则 ---
+const superDetectors = [];
+for (const key in process.env) {
+    if (/^SuperDetector\d+$/.test(key)) {
+        const index = key.substring(13); // 获取数字部分
+        const outputKey = `SuperDetector_Output${index}`;
+        if (process.env[outputKey]) {
+            superDetectors.push({
+                detector: process.env[key],
+                output: process.env[outputKey]
+            });
+            console.log(`加载全局上下文转换规则: "${process.env[key]}" -> "${process.env[outputKey]}"`);
+        } else {
+            console.warn(`警告: 找到 ${key} 但未找到对应的 ${outputKey}`);
+        }
+    }
+}
+if (superDetectors.length > 0) {
+    console.log(`共加载了 ${superDetectors.length} 条全局上下文转换规则。`);
+} else {
+    console.log('未加载任何全局上下文转换规则。');
+}
+// --- 全局上下文转换规则读取结束 ---
+
 const app = express();
 const port = process.env.PORT; // 从 env 或默认值获取端口
 const apiKey = process.env.API_Key; // API 服务器密钥
@@ -266,6 +290,16 @@ async function replaceCommonVariables(text) {
         }
     }
     // --- 系统提示词转换结束 ---
+
+    // --- 全局上下文转换 ---
+    for (const rule of superDetectors) {
+        // 确保 detector 和 output 都是字符串，并且 detector 不为空
+        if (typeof rule.detector === 'string' && rule.detector.length > 0 && typeof rule.output === 'string') {
+             // 使用 replaceAll 进行全局替换
+             processedText = processedText.replaceAll(rule.detector, rule.output);
+        }
+    }
+    // --- 全局上下文转换结束 ---
 
     return processedText;
 }
