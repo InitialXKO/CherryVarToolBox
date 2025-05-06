@@ -13,6 +13,9 @@ const apiKey = process.env.API_Key;
 const apiUrl = process.env.API_URL;
 const imageModelName = process.env.ImageModel;
 const imagePromptText = process.env.ImagePrompt;
+const imageModelOutputMaxTokens = parseInt(process.env.ImageModelOutput, 10) || 1024; // 新增
+const imageModelThinkingBudget = parseInt(process.env.ImageModelThinkingBudget, 10); // 新增
+// const imageModelContentMax = parseInt(process.env.ImageModelContent, 10); // 新增, 暂不直接使用
 
 async function reidentifyAndUpdateCache(targetId) {
     if (!targetId) {
@@ -86,8 +89,18 @@ async function reidentifyAndUpdateCache(targetId) {
                         ]
                     }
                 ],
-                max_tokens: 1024,
+                max_tokens: imageModelOutputMaxTokens, // 使用配置的值
             };
+
+            // 添加 thinking_config 如果 ImageModelThinkingBudget 有效
+            if (imageModelThinkingBudget && !isNaN(imageModelThinkingBudget) && imageModelThinkingBudget > 0) {
+                payload.extra_body = { // 确保是 extra_body
+                    thinking_config: {
+                        thinking_budget: imageModelThinkingBudget
+                    }
+                };
+                console.log(`[Reidentify] 使用 Thinking Budget: ${imageModelThinkingBudget}`);
+            }
 
             const fetchResponse = await fetch(`${apiUrl}/v1/chat/completions`, {
                 method: 'POST',
@@ -130,11 +143,17 @@ async function reidentifyAndUpdateCache(targetId) {
         return;
     }
 
+    // 清理描述中的潜在非法JSON字符
+    const cleanedNewDescription = newDescription.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+    if (newDescription.length !== cleanedNewDescription.length) {
+        console.warn(`[Reidentify] 清理了新描述中的特殊字符。原长度: ${newDescription.length}, 清理后长度: ${cleanedNewDescription.length}. ID: ${targetId}`);
+    }
+
     // 4. 更新缓存
     try {
         const entryToUpdate = imageBase64Cache[foundBase64Data];
         if (typeof entryToUpdate === 'object') {
-            entryToUpdate.description = newDescription;
+            entryToUpdate.description = cleanedNewDescription; // 使用清理后的描述
             entryToUpdate.timestamp = new Date().toISOString();
             // ID 保持不变
             await fs.writeFile(imageCacheFilePath, JSON.stringify(imageBase64Cache, null, 2));

@@ -17,6 +17,10 @@ const imageModelName = process.env.ImageModel;
 const imagePromptText = process.env.ImagePrompt;
 const imageCacheFilePath = path.join(__dirname, 'imagebase64.json');
 let imageBase64Cache = {}; // 内存缓存
+const imageModelOutputMaxTokens = parseInt(process.env.ImageModelOutput, 10) || 1024; // 新增，带默认值
+const imageModelThinkingBudget = parseInt(process.env.ImageModelThinkingBudget, 10); // 新增, 可选
+// const imageModelContentMax = parseInt(process.env.ImageModelContent, 10); // 新增, 暂不直接使用于请求体
+const enableBase64Cache = (process.env.Base64Cache || "True").toLowerCase() === "true"; // 新增，默认为True
 // --- 图片转译和缓存相关结束 ---
 
 // --- 读取系统提示词转换规则 ---
@@ -589,8 +593,19 @@ async function translateImageAndCache(base64DataWithPrefix, imageIndexForLabel) 
                         ]
                     }
                 ],
-                max_tokens: 1024, // 可根据需要调整
+                max_tokens: imageModelOutputMaxTokens, // 使用配置的值
             };
+            
+            // 添加 thinking_config 如果 ImageModelThinkingBudget 有效
+            if (imageModelThinkingBudget && !isNaN(imageModelThinkingBudget) && imageModelThinkingBudget > 0) {
+                payload.extra_body = { // 确保是 extra_body
+                    thinking_config: {
+                        thinking_budget: imageModelThinkingBudget
+                    }
+                };
+                console.log(`[ImageTranslate] 使用 Thinking Budget: ${imageModelThinkingBudget}`);
+            }
+
 
             const fetchResponse = await fetch(`${apiUrl}/v1/chat/completions`, {
                 method: 'POST',
@@ -611,10 +626,17 @@ async function translateImageAndCache(base64DataWithPrefix, imageIndexForLabel) 
 
             if (description && description.length >= 50) { // 新增：检查描述长度
                 console.log(`[ImageTranslate] 图片 ${imageIndexForLabel + 1} 转译成功且内容足够 (尝试 #${attempt})。长度: ${description.length}`);
+                
+                // 清理描述中的潜在非法JSON字符 (移除U+0000-U+0008, U+000B, U+000C, U+000E-U+001F)
+                const cleanedDescription = description.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+                if (description.length !== cleanedDescription.length) {
+                    console.warn(`[ImageTranslate] 清理了描述中的特殊字符。原长度: ${description.length}, 清理后长度: ${cleanedDescription.length}. Base64Key (头30): ${pureBase64Data.substring(0,30)}`);
+                }
+
                 // --- 修改：保存为新的缓存结构 ---
                 const newCacheEntry = {
                     id: crypto.randomUUID(),
-                    description: description,
+                    description: cleanedDescription, // 使用清理后的描述
                     timestamp: new Date().toISOString()
                 };
                 imageBase64Cache[pureBase64Data] = newCacheEntry;
@@ -649,10 +671,12 @@ app.post('/v1/chat/completions', async (req, res) => {
         const originalBody = req.body;
         let globalImageIndexForLabel = 0; // 用于生成 IMAGE1Info, IMAGE2Info 标签
 
-        // --- 图片转译和缓存处理 ---
-        if (originalBody.messages && Array.isArray(originalBody.messages)) {
-            for (let i = 0; i < originalBody.messages.length; i++) {
-                const msg = originalBody.messages[i];
+        // --- 图片转译和缓存处理 (根据 Base64Cache 开关决定是否执行) ---
+        if (enableBase64Cache) {
+            console.log('[Base64Cache] 功能已启用，开始处理图片...');
+            if (originalBody.messages && Array.isArray(originalBody.messages)) {
+                for (let i = 0; i < originalBody.messages.length; i++) {
+                    const msg = originalBody.messages[i];
                 if (msg.role === 'user' && Array.isArray(msg.content)) {
                     const imagePartsToTranslate = [];
                     const contentWithoutImages = []; // 用于重建消息内容
@@ -679,9 +703,13 @@ app.post('/v1/chat/completions', async (req, res) => {
                         // 将所有图片信息追加到文本末尾
                         userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + translatedImageTexts.join('\n');
                         msg.content = contentWithoutImages; // 更新消息内容，移除图片，保留（或添加）文本
+                        }
                     }
                 }
             }
+            console.log('[Base64Cache] 图片处理完成。');
+        } else {
+            console.log('[Base64Cache] 功能已禁用，跳过图片转译和缓存处理。');
         }
         // --- 图片转译和缓存处理结束 ---
 
