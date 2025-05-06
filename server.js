@@ -7,9 +7,17 @@ const lunarCalendar = require('chinese-lunar-calendar'); // 导入整个模块
 const fs = require('fs').promises; // 使用 fs.promises 进行异步文件操作
 const path = require('path');
 const { Writable } = require('stream'); // 引入 Writable 用于收集流数据
+const crypto = require('crypto'); // 新增：用于生成 UUID
 
 // 加载环境变量
 dotenv.config({ path: 'config.env' });
+
+// --- 新增：图片转译和缓存相关 ---
+const imageModelName = process.env.ImageModel;
+const imagePromptText = process.env.ImagePrompt;
+const imageCacheFilePath = path.join(__dirname, 'imagebase64.json');
+let imageBase64Cache = {}; // 内存缓存
+// --- 图片转译和缓存相关结束 ---
 
 // --- 读取系统提示词转换规则 ---
 const detectors = [];
@@ -495,33 +503,171 @@ async function handleDailyNote(noteBlockContent) {
 }
 
 // --- 代理路由 ---
+
+// --- 新增：保存图片缓存到文件 ---
+async function saveImageCache() {
+    try {
+        await fs.writeFile(imageCacheFilePath, JSON.stringify(imageBase64Cache, null, 2));
+        // console.log(`图片 Base64 缓存已保存到 ${imageCacheFilePath}`); // 可以取消注释以进行调试
+    } catch (error) {
+        console.error(`保存图片 Base64 缓存到 ${imageCacheFilePath} 失败:`, error);
+    }
+}
+
+// --- 新增：图片转译和缓存核心逻辑 ---
+async function translateImageAndCache(base64DataWithPrefix, imageIndexForLabel) {
+    // 提取纯 Base64 数据
+    const base64PrefixPattern = /^data:image\/[^;]+;base64,/;
+    const pureBase64Data = base64DataWithPrefix.replace(base64PrefixPattern, '');
+    const imageMimeType = (base64DataWithPrefix.match(base64PrefixPattern) || ['data:image/jpeg;base64,'])[0].replace('base64,', '');
+
+    // --- 修改：处理新的缓存结构 ---
+    const cachedEntry = imageBase64Cache[pureBase64Data];
+    if (cachedEntry) {
+        const description = typeof cachedEntry === 'string' ? cachedEntry : cachedEntry.description;
+        console.log(`[ImageCache] 命中缓存 (ID: ${typeof cachedEntry === 'object' ? cachedEntry.id : 'N/A - old format'})，图片 ${imageIndexForLabel + 1}`);
+        return `[IMAGE${imageIndexForLabel + 1}Info: ${description}]`;
+    }
+    // --- 缓存结构处理结束 ---
+
+    console.log(`[ImageTranslate] 开始转译图片 ${imageIndexForLabel + 1}，调用 API...`);
+    if (!imageModelName || !imagePromptText || !apiKey || !apiUrl) {
+        console.error('图片转译所需的配置不完整 (ImageModel, ImagePrompt, API_Key, API_URL)');
+        return `[IMAGE${imageIndexForLabel + 1}Info: 图片转译服务配置不完整]`;
+    }
+
+    const maxRetries = 3;
+    let attempt = 0;
+    let lastError = null;
+
+    while (attempt < maxRetries) {
+        attempt++;
+        console.log(`[ImageTranslate] 图片 ${imageIndexForLabel + 1}，尝试 #${attempt}`);
+        try {
+            const payload = {
+                model: imageModelName,
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: imagePromptText },
+                            { type: "image_url", image_url: { url: `${imageMimeType}base64,${pureBase64Data}` } }
+                        ]
+                    }
+                ],
+                max_tokens: 1024, // 可根据需要调整
+            };
+
+            const fetchResponse = await fetch(`${apiUrl}/v1/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify(payload),
+            });
+
+            if (!fetchResponse.ok) {
+                const errorText = await fetchResponse.text();
+                throw new Error(`API 调用失败 (尝试 ${attempt}): ${fetchResponse.status} ${fetchResponse.statusText} - ${errorText}`);
+            }
+
+            const result = await fetchResponse.json();
+            const description = result.choices?.[0]?.message?.content?.trim();
+
+            if (description && description.length >= 50) { // 新增：检查描述长度
+                console.log(`[ImageTranslate] 图片 ${imageIndexForLabel + 1} 转译成功且内容足够 (尝试 #${attempt})。长度: ${description.length}`);
+                // --- 修改：保存为新的缓存结构 ---
+                const newCacheEntry = {
+                    id: crypto.randomUUID(),
+                    description: description,
+                    timestamp: new Date().toISOString()
+                };
+                imageBase64Cache[pureBase64Data] = newCacheEntry;
+                // --- 缓存结构修改结束 ---
+                await saveImageCache(); // 异步保存到文件
+                return `[IMAGE${imageIndexForLabel + 1}Info: ${description}]`;
+            } else if (description) { // 如果有描述但太短
+                lastError = new Error(`描述过短 (长度: ${description.length}, 少于50字符) (尝试 ${attempt})。内容: ${description.substring(0,100)}...`);
+                console.warn(`[ImageTranslate] 图片 ${imageIndexForLabel + 1} ${lastError.message}`);
+            } else { // 如果完全没有描述
+                lastError = new Error(`转译结果中未找到描述 (尝试 ${attempt})。原始返回: ${JSON.stringify(result)}`);
+                console.warn(`[ImageTranslate] 图片 ${imageIndexForLabel + 1} ${lastError.message}`);
+            }
+        } catch (error) {
+            lastError = error; // API 调用本身的错误
+            console.error(`[ImageTranslate] 图片 ${imageIndexForLabel + 1} 转译时出错 (尝试 #${attempt}):`, error.message);
+        }
+
+        if (attempt < maxRetries) {
+            console.log(`[ImageTranslate] 图片 ${imageIndexForLabel + 1}，将在500ms后重试...`);
+            await new Promise(resolve => setTimeout(resolve, 500)); // 延迟500ms
+        }
+    }
+
+    console.error(`[ImageTranslate] 图片 ${imageIndexForLabel + 1} 在 ${maxRetries} 次尝试后转译失败。最后错误: ${lastError ? lastError.message : '未知错误'}`);
+    return `[IMAGE${imageIndexForLabel + 1}Info: 图片转译在 ${maxRetries} 次尝试后失败: ${lastError ? lastError.message.substring(0,150) : '未知错误'}...]`;
+}
+
+
 app.post('/v1/chat/completions', async (req, res) => {
     try {
         const originalBody = req.body;
+        let globalImageIndexForLabel = 0; // 用于生成 IMAGE1Info, IMAGE2Info 标签
 
-        // 处理 messages 数组中的变量替换
+        // --- 图片转译和缓存处理 ---
         if (originalBody.messages && Array.isArray(originalBody.messages)) {
-            // 使用 Promise.all 来并行处理所有消息内容的变量替换
-            originalBody.messages = await Promise.all(originalBody.messages.map(async (msg) => {
-                // 深拷贝消息对象以避免直接修改原始请求体（可选，但更安全）
-                const newMessage = JSON.parse(JSON.stringify(msg));
+            for (let i = 0; i < originalBody.messages.length; i++) {
+                const msg = originalBody.messages[i];
+                if (msg.role === 'user' && Array.isArray(msg.content)) {
+                    const imagePartsToTranslate = [];
+                    const contentWithoutImages = []; // 用于重建消息内容
 
+                    for (const part of msg.content) {
+                        if (part.type === 'image_url' && part.image_url && typeof part.image_url.url === 'string' && part.image_url.url.startsWith('data:image')) {
+                            imagePartsToTranslate.push(part.image_url.url);
+                        } else {
+                            contentWithoutImages.push(part);
+                        }
+                    }
+
+                    if (imagePartsToTranslate.length > 0) {
+                        const translationPromises = imagePartsToTranslate.map((base64Url) =>
+                            translateImageAndCache(base64Url, globalImageIndexForLabel++)
+                        );
+                        const translatedImageTexts = await Promise.all(translationPromises);
+
+                        let userTextPart = contentWithoutImages.find(p => p.type === 'text');
+                        if (!userTextPart) {
+                            userTextPart = { type: 'text', text: '' };
+                            contentWithoutImages.unshift(userTextPart); // 加到最前面
+                        }
+                        // 将所有图片信息追加到文本末尾
+                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + translatedImageTexts.join('\n');
+                        msg.content = contentWithoutImages; // 更新消息内容，移除图片，保留（或添加）文本
+                    }
+                }
+            }
+        }
+        // --- 图片转译和缓存处理结束 ---
+
+        // 处理 messages 数组中的变量替换 (现有逻辑)
+        if (originalBody.messages && Array.isArray(originalBody.messages)) {
+            originalBody.messages = await Promise.all(originalBody.messages.map(async (msg) => {
+                const newMessage = JSON.parse(JSON.stringify(msg)); // 深拷贝
                 if (newMessage.content && typeof newMessage.content === 'string') {
                     newMessage.content = await replaceCommonVariables(newMessage.content);
-                }
-                // 处理 content 是数组的情况（例如 vision 模型）
-                else if (Array.isArray(newMessage.content)) {
+                } else if (Array.isArray(newMessage.content)) {
                     newMessage.content = await Promise.all(newMessage.content.map(async (part) => {
                         if (part.type === 'text' && typeof part.text === 'string') {
-                            // 深拷贝部分对象
                             const newPart = JSON.parse(JSON.stringify(part));
                             newPart.text = await replaceCommonVariables(newPart.text);
                             return newPart;
                         }
-                        return part; // 对于非文本部分或格式不符的部分，保持原样
+                        return part;
                     }));
                 }
-                return newMessage; // 返回处理后的消息对象
+                return newMessage;
             }));
         }
         // 注意：如果 messages 数组不存在或格式不正确，这里不再自动创建或修改
@@ -678,38 +824,60 @@ app.post('/v1/chat/completions', async (req, res) => {
 
 // --- 初始化和定时任务 ---
 async function initialize() {
-   console.log('开始初始化表情包列表...');
-   const imageDir = path.join(__dirname, 'image');
-   try {
-       const entries = await fs.readdir(imageDir, { withFileTypes: true });
-       const emojiDirs = entries.filter(entry => entry.isDirectory() && entry.name.endsWith('表情包'));
+    console.log('开始初始化表情包列表...');
+    const imageDir = path.join(__dirname, 'image');
+    try {
+        const entries = await fs.readdir(imageDir, { withFileTypes: true });
+        const emojiDirs = entries.filter(entry => entry.isDirectory() && entry.name.endsWith('表情包'));
 
-       if (emojiDirs.length === 0) {
-           console.warn(`警告: 在 ${imageDir} 目录下未找到任何以 '表情包' 结尾的文件夹。`);
-       } else {
-           console.log(`找到 ${emojiDirs.length} 个表情包目录，开始加载...`);
-           // 使用 Promise.all 并行加载所有表情包列表
-           await Promise.all(emojiDirs.map(async (dirEntry) => {
-               const emojiName = dirEntry.name; // e.g., "通用表情包", "小克表情包"
-               const dirPath = path.join(imageDir, emojiName);
-               const filePath = path.join(__dirname, `${emojiName}.txt`); // 列表文件放在根目录
-               console.log(`正在处理 ${emojiName}... 目录: ${dirPath}, 列表文件: ${filePath}`);
-               try {
-                   const listContent = await updateAndLoadAgentEmojiList(emojiName, dirPath, filePath);
-                   cachedEmojiLists.set(emojiName, listContent); // 缓存列表内容
-                   console.log(`${emojiName} 列表已加载并缓存。`);
-               } catch (loadError) {
-                   console.error(`加载 ${emojiName} 列表时出错:`, loadError);
-                   cachedEmojiLists.set(emojiName, `${emojiName}列表加载失败`); // 缓存错误信息
-               }
-           }));
-           console.log('所有表情包列表加载完成。');
-       }
-   } catch (error) {
-       console.error(`读取 image 目录 ${imageDir} 时出错:`, error);
-   }
-   console.log('表情包列表初始化结束。');
+        if (emojiDirs.length === 0) {
+            console.warn(`警告: 在 ${imageDir} 目录下未找到任何以 '表情包' 结尾的文件夹。`);
+        } else {
+            console.log(`找到 ${emojiDirs.length} 个表情包目录，开始加载...`);
+            await Promise.all(emojiDirs.map(async (dirEntry) => {
+                const emojiName = dirEntry.name;
+                const dirPath = path.join(imageDir, emojiName);
+                const filePath = path.join(__dirname, `${emojiName}.txt`);
+                console.log(`正在处理 ${emojiName}... 目录: ${dirPath}, 列表文件: ${filePath}`);
+                try {
+                    const listContent = await updateAndLoadAgentEmojiList(emojiName, dirPath, filePath);
+                    cachedEmojiLists.set(emojiName, listContent);
+                    console.log(`${emojiName} 列表已加载并缓存。`);
+                } catch (loadError) {
+                    console.error(`加载 ${emojiName} 列表时出错:`, loadError);
+                    cachedEmojiLists.set(emojiName, `${emojiName}列表加载失败`);
+                }
+            }));
+            console.log('所有表情包列表加载完成。');
+        }
+    } catch (error) {
+        console.error(`读取 image 目录 ${imageDir} 时出错:`, error);
+    }
+    console.log('表情包列表初始化结束。');
 
+    // --- 新增：加载图片 Base64 缓存 ---
+    console.log('开始初始化图片 Base64 缓存...');
+    try {
+        const data = await fs.readFile(imageCacheFilePath, 'utf-8');
+        imageBase64Cache = JSON.parse(data);
+        console.log(`从 ${imageCacheFilePath} 加载了 ${Object.keys(imageBase64Cache).length} 条图片缓存。`);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            console.log(`${imageCacheFilePath} 文件不存在，将创建新的缓存。`);
+            imageBase64Cache = {}; // 初始化为空对象
+            try {
+                await fs.writeFile(imageCacheFilePath, JSON.stringify(imageBase64Cache, null, 2));
+                console.log(`已创建空的 ${imageCacheFilePath} 文件。`);
+            } catch (writeError) {
+                console.error(`创建空的 ${imageCacheFilePath} 文件失败:`, writeError);
+            }
+        } else {
+            console.error(`读取图片缓存文件 ${imageCacheFilePath} 失败:`, error);
+            imageBase64Cache = {};
+        }
+    }
+    console.log('图片 Base64 缓存初始化结束。');
+    // --- 图片 Base64 缓存加载结束 ---
 
     // 启动时尝试加载一次缓存的天气信息
     try {
@@ -718,7 +886,7 @@ async function initialize() {
     } catch (error) {
         if (error.code === 'ENOENT') {
             console.log(`${weatherInfoPath} 文件不存在，将尝试首次获取天气信息。`);
-            await fetchAndUpdateWeather(); // 如果文件不存在，立即获取一次
+            await fetchAndUpdateWeather();
         } else {
             console.error(`读取天气文件 ${weatherInfoPath} 失败:`, error);
             cachedWeatherInfo = '读取天气缓存失败';
@@ -726,11 +894,8 @@ async function initialize() {
     }
 
     // 安排每天凌晨4点更新天气
-    schedule.scheduleJob('0 4 * * *', fetchAndUpdateWeather); // Cron 表达式：秒 分 时 日 月 周
+    schedule.scheduleJob('0 4 * * *', fetchAndUpdateWeather);
     console.log('已安排每天凌晨4点自动更新天气信息。');
-
-    // 启动时也获取一次天气（可选，上面已处理文件不存在的情况）
-    // await fetchAndUpdateWeather();
 }
 
 // 启动服务器
