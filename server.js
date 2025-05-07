@@ -76,13 +76,13 @@ const port = process.env.PORT; // 从 env 或默认值获取端口
 const apiKey = process.env.API_Key; // API 服务器密钥
 const apiUrl = process.env.API_URL; // API 服务器地址
 const serverKey = process.env.Key; // 中间层认证密钥
-const systemInfo = process.env.SystemInfo;
-const weatherInfoPath = process.env.WeatherInfo || 'Weather.txt'; // 天气缓存文件路径
+const systemInfo = process.env.VarSystemInfo; // 从 config.env 读取 VarSystemInfo
+const weatherInfoPath = process.env.VarWeatherInfo || 'Weather.txt'; // 从 config.env 读取 VarWeatherInfo
 const weatherModel = process.env.WeatherModel;
-const weatherPromptTemplate = process.env.WeatherPrompt;
-const city = process.env.City; // 新增：读取城市变量
-const emojiPromptTemplate = process.env.EmojiPrompt; // 新增：读取表情包提示模板
-const userInfo = process.env.User; // 新增：读取用户变量
+const weatherPromptTemplate = process.env.WeatherPrompt; // WeatherPrompt 内部已使用 {{VarCity}}
+const city = process.env.VarCity; // 从 config.env 读取 VarCity
+const emojiPromptTemplate = process.env.VarEmojiPrompt; // 从 config.env 读取 VarEmojiPrompt
+const userInfo = process.env.VarUser; // 从 config.env 读取 VarUser
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
 const cachedEmojiLists = new Map(); // 使用 Map 存储所有表情包列表缓存
@@ -91,9 +91,35 @@ const cachedEmojiLists = new Map(); // 使用 Map 存储所有表情包列表缓
 app.use(express.json({ limit: '300mb' })); // 将 JSON 限制增加到 300MB
 app.use(express.urlencoded({ limit: '300mb', extended: true })); // 将 URL 编码限制增加到 300MB
 
-// --- 提供静态图片文件 ---
-app.use('/images', express.static(path.join(__dirname, 'image')));
-console.log(`图片服务已启动，访问路径: /images`);
+// --- 提供静态图片文件 (修改为带鉴权) ---
+// app.use('/images', express.static(path.join(__dirname, 'image'))); // 旧的无鉴权服务，将被移除或注释
+// console.log(`图片服务已启动，访问路径: /images`);
+
+// 新的图片访问鉴权中间件
+const imageAuthMiddleware = (req, res, next) => {
+    const pathSegmentWithKey = req.params.pathSegmentWithKey; // 例如 "pw=YOUR_IMAGE_KEY"
+    const serverImageKeyForAuth = process.env.Image_Key;
+
+    if (pathSegmentWithKey && pathSegmentWithKey.startsWith('pw=')) {
+        const requestImageKey = pathSegmentWithKey.substring(3); // 提取 "pw=" 后面的部分
+        if (requestImageKey === serverImageKeyForAuth) {
+            next(); // Key 有效，继续处理请求
+        } else {
+            // console.warn(`图片访问鉴权失败: 提供的 Key "${requestImageKey}" 无效`);
+            return res.status(401).type('text/plain').send('Unauthorized: Invalid key for image access.');
+        }
+    } else {
+        // console.warn(`图片访问鉴权失败: 路径格式不正确 "${pathSegmentWithKey}"`);
+        return res.status(400).type('text/plain').send('Bad Request: Invalid image access path format.');
+    }
+};
+
+// 新的受保护的图片服务路由
+// 匹配 /pw=KEY/images/* 格式
+// :pathSegmentWithKey 会捕获 "pw=KEY" 这部分
+app.use('/:pathSegmentWithKey/images', imageAuthMiddleware, express.static(path.join(__dirname, 'image')));
+console.log(`受保护的图片服务已启动，访问路径格式: /pw=YOUR_IMAGE_KEY/images/...`);
+// 旧的 /images 路径不再直接可用
 
 // 中间件：记录所有传入请求
 app.use((req, res, next) => {
@@ -189,17 +215,28 @@ async function replaceCommonVariables(text) {
     }
     processedText = processedText.replace(/\{\{Festival\}\}/g, festivalInfo);
 
-    // {{SystemInfo}}
-    processedText = processedText.replace(/\{\{SystemInfo\}\}/g, systemInfo || '未配置系统信息');
+    // {{SystemInfo}} - 现在将通过下面的通用 Varxxx 逻辑处理
+    // processedText = processedText.replace(/\{\{SystemInfo\}\}/g, systemInfo || '未配置系统信息'); // 由通用逻辑处理
 
-    // {{WeatherInfo}}
+    // {{WeatherInfo}} - 这个比较特殊，它不是 Var 开头，但也是动态替换
     processedText = processedText.replace(/\{\{WeatherInfo\}\}/g, cachedWeatherInfo || '天气信息不可用');
 
-    // {{City}}
-    processedText = processedText.replace(/\{\{City\}\}/g, city || '未配置城市');
+    // {{City}} - 由通用 {{VarCity}} 逻辑处理
+    // processedText = processedText.replace(/\{\{City\}\}/g, city || '未配置城市');
 
-    // {{User}}
-    processedText = processedText.replace(/\{\{User\}\}/g, userInfo || '未配置用户信息');
+    // {{User}} - 由通用 {{VarUser}} 逻辑处理
+    // processedText = processedText.replace(/\{\{User\}\}/g, userInfo || '未配置用户信息');
+
+    // --- 通用处理 {{Varxxx}} 占位符 ---
+    // 这个循环应该在其他特定占位符（如 Date, Time, WeatherInfo）之后，但在表情包、日记等复杂逻辑之前
+    for (const envKey in process.env) {
+        if (envKey.startsWith('Var')) {
+            const placeholder = `{{${envKey}}}`; // 例如 {{VarCity}}
+            const value = process.env[envKey];
+            processedText = processedText.replaceAll(placeholder, value || `未配置${envKey}`);
+        }
+    }
+    // --- {{Varxxx}} 处理结束 ---
 
    // --- 动态处理 {{xx表情包}} 占位符 ---
    const emojiPlaceholderRegex = /\{\{(.+?表情包)\}\}/g;
@@ -305,6 +342,13 @@ async function replaceCommonVariables(text) {
     }
     // --- 全局上下文转换结束 ---
 
+    // 替换 VarEmojiPrompt 中可能引入的 {{API_Key}} 占位符
+    // 这确保了如果 VarEmojiPrompt 的内容（其中包含 {{Image_Key}}）被注入到 processedText 中，
+    // 这里的 {{Image_Key}} 会被替换成真实的 Image_Key 值。
+    if (processedText && typeof processedText === 'string' && process.env.Image_Key) {
+        processedText = processedText.replaceAll('{{Image_Key}}', process.env.Image_Key);
+    }
+
     return processedText;
 }
 
@@ -322,41 +366,57 @@ async function fetchAndUpdateWeather() {
         const now = new Date();
         const date = now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
         let prompt = weatherPromptTemplate.replace(/\{\{Date\}\}/g, date);
-        prompt = prompt.replace(/\{\{City\}\}/g, city || '默认城市'); // 使用读取到的 city 或默认值
+        // WeatherPrompt 在 config.env 中已更新为 {{VarCity}}
+        // 此处的替换逻辑将由 replaceCommonVariables 中的通用 {{Varxxx}} 处理
+        // 因此，在调用 fetchAndUpdateWeather 之前，weatherPromptTemplate 应该已经被 replaceCommonVariables 处理过
+        // 如果 fetchAndUpdateWeather 被独立调用（例如初始化时），则需要确保其 prompt 也能被正确替换
+        // 为了安全起见，我们在这里保留对 {{VarCity}} 的显式替换，以防 weatherPromptTemplate 未被完全处理
+        // 或者，更好的做法是确保 fetchAndUpdateWeather 接收的 prompt 已经是完全处理过的
+        // 考虑到 fetchAndUpdateWeather 可能会在 replaceCommonVariables 之外被调用（例如初始化），
+        // 并且其模板只包含 {{Date}} 和 {{VarCity}}，这里可以针对性处理。
+        // 但更统一的做法是，让 replaceCommonVariables 处理所有模板。
+        // 假设 weatherPromptTemplate 在这里已经是原始模板，需要替换
+        prompt = prompt.replace(/\{\{VarCity\}\}/g, process.env.VarCity || '默认城市');
 
         // --- First API Call ---
+        const weatherModelMaxTokens = parseInt(process.env.WeatherModelMaxTokens, 10); // 读取配置
+        const firstApiPayload = {
+            model: weatherModel,
+            messages: [{ role: 'user', content: prompt }],
+            tools: [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "google_search",
+                        "description": "Perform a Google search to find information on the web.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query."
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                }
+            ],
+            tool_choice: "auto"
+        };
+
+        if (weatherModelMaxTokens && !isNaN(weatherModelMaxTokens) && weatherModelMaxTokens > 0) {
+            firstApiPayload.max_tokens = weatherModelMaxTokens;
+            console.log(`[WeatherFetch] 第一次天气 API 调用使用 MaxTokens: ${weatherModelMaxTokens}`);
+        }
+
         let response = await fetch(`${apiUrl}/v1/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`,
             },
-            body: JSON.stringify({
-                model: weatherModel,
-                messages: [{ role: 'user', content: prompt }],
-                // 使用 OpenAI 兼容格式添加 tools 参数，尝试启用网页搜索
-                tools: [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "google_search", // 使用 google_search 作为工具名，根据用户提供的示例
-                            "description": "Perform a Google search to find information on the web.", // 更新描述以匹配示例
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "query": {
-                                        "type": "string",
-                                        "description": "The search query."
-                                    }
-                                },
-                                "required": ["query"]
-                            }
-                        }
-                    }
-                ],
-                // OpenAI 风格的 tool_choice，让模型自动选择是否使用工具
-                tool_choice: "auto"
-            }),
+            body: JSON.stringify(firstApiPayload),
         });
 
         if (!response.ok) {
@@ -396,6 +456,17 @@ async function fetchAndUpdateWeather() {
 
             // --- Second API Call ---
             // Removed log marker
+            const secondApiPayload = {
+                model: weatherModel,
+                messages: messagesForSecondCall,
+            };
+
+            // weatherModelMaxTokens is defined at the top of fetchAndUpdateWeather
+            if (weatherModelMaxTokens && !isNaN(weatherModelMaxTokens) && weatherModelMaxTokens > 0) {
+                secondApiPayload.max_tokens = weatherModelMaxTokens;
+                console.log(`[WeatherFetch] 第二次天气 API 调用使用 MaxTokens: ${weatherModelMaxTokens}`);
+            }
+
             response = await fetch(`${apiUrl}/v1/chat/completions`, {
                 method: 'POST',
                 headers: {
@@ -404,10 +475,7 @@ async function fetchAndUpdateWeather() {
                 },
                 // Send the history including the tool call request and our constructed tool result
                 // DO NOT send 'tools' or 'tool_choice' in the second call
-                body: JSON.stringify({
-                    model: weatherModel,
-                    messages: messagesForSecondCall,
-                }),
+                body: JSON.stringify(secondApiPayload),
             });
 
             if (!response.ok) {
@@ -701,7 +769,7 @@ app.post('/v1/chat/completions', async (req, res) => {
                             contentWithoutImages.unshift(userTextPart); // 加到最前面
                         }
                         // 将所有图片信息追加到文本末尾
-                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + translatedImageTexts.join('\n');
+                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + '[检测到多模态数据，Var工具箱已自动提取图片信息，信息元如下——]\n' + translatedImageTexts.join('\n');
                         msg.content = contentWithoutImages; // 更新消息内容，移除图片，保留（或添加）文本
                         }
                     }
