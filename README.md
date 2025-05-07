@@ -55,7 +55,7 @@
 *   `Detector_OutputX`: 用于替换 `DetectorX` 的目标文本 (X为对应数字)。
 *   `SuperDetectorX`: 需要被检测和替换的全局上下文文本片段 (X为数字)。
 *   `SuperDetector_OutputX`: 用于替换 `SuperDetectorX` 的目标文本 (X为对应数字)。
-
+*   `ImageModelAsynchronous`: 用于定义获取图像描述的并发上限。
 请根据你的实际环境修改 `config.env` 文件。**不要在 `config.env` 或任何公开的文档中包含真实的密钥。**
 
 ## 安装
