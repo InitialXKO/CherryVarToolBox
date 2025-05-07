@@ -21,6 +21,7 @@ const imageModelOutputMaxTokens = parseInt(process.env.ImageModelOutput, 10) || 
 const imageModelThinkingBudget = parseInt(process.env.ImageModelThinkingBudget, 10); // 新增, 可选
 // const imageModelContentMax = parseInt(process.env.ImageModelContent, 10); // 新增, 暂不直接使用于请求体
 const enableBase64Cache = (process.env.Base64Cache || "True").toLowerCase() === "true"; // 新增，默认为True
+const imageModelAsynchronousLimit = parseInt(process.env.ImageModelAsynchronous, 10) || 1; // 新增，定义多模态模型异步请求上限，默认为1
 // --- 图片转译和缓存相关结束 ---
 
 // --- 读取系统提示词转换规则 ---
@@ -758,10 +759,18 @@ app.post('/v1/chat/completions', async (req, res) => {
                     }
 
                     if (imagePartsToTranslate.length > 0) {
-                        const translationPromises = imagePartsToTranslate.map((base64Url) =>
-                            translateImageAndCache(base64Url, globalImageIndexForLabel++)
-                        );
-                        const translatedImageTexts = await Promise.all(translationPromises);
+                        const allTranslatedImageTexts = [];
+                        console.log(`[ImageAsync] 准备处理 ${imagePartsToTranslate.length} 张图片，并发上限: ${imageModelAsynchronousLimit}`);
+                        for (let i = 0; i < imagePartsToTranslate.length; i += imageModelAsynchronousLimit) {
+                            const chunkToTranslate = imagePartsToTranslate.slice(i, i + imageModelAsynchronousLimit);
+                            console.log(`[ImageAsync] 处理批次: ${Math.floor(i / imageModelAsynchronousLimit) + 1}, 图片数量: ${chunkToTranslate.length}`);
+                            const translationPromisesInChunk = chunkToTranslate.map((base64Url) =>
+                                translateImageAndCache(base64Url, globalImageIndexForLabel++) // globalImageIndexForLabel 仍然为每个图片独立递增
+                            );
+                            const translatedTextsInChunk = await Promise.all(translationPromisesInChunk);
+                            allTranslatedImageTexts.push(...translatedTextsInChunk);
+                        }
+                        console.log(`[ImageAsync] 所有图片处理完成，共获得 ${allTranslatedImageTexts.length} 条描述。`);
 
                         let userTextPart = contentWithoutImages.find(p => p.type === 'text');
                         if (!userTextPart) {
@@ -769,7 +778,7 @@ app.post('/v1/chat/completions', async (req, res) => {
                             contentWithoutImages.unshift(userTextPart); // 加到最前面
                         }
                         // 将所有图片信息追加到文本末尾
-                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + '[检测到多模态数据，Var工具箱已自动提取图片信息，信息元如下——]\n' + translatedImageTexts.join('\n');
+                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + '[检测到多模态数据，Var工具箱已自动提取图片信息，信息元如下——]\n' + allTranslatedImageTexts.join('\n');
                         msg.content = contentWithoutImages; // 更新消息内容，移除图片，保留（或添加）文本
                         }
                     }
