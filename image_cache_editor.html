@@ -55,6 +55,7 @@
             gap: 20px;
         }
         .image-entry {
+            position: relative; /* 为了定位删除按钮 */
             border: 1px solid #ddd;
             padding: 15px;
             border-radius: 5px;
@@ -147,6 +148,28 @@
             text-decoration: none;
             cursor: pointer;
         }
+
+        .delete-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background-color: #ff4d4d; /* 红色背景 */
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            font-size: 16px;
+            font-weight: bold;
+            line-height: 22px; /* 垂直居中 '×' */
+            text-align: center;
+            cursor: pointer;
+            z-index: 10; /* 确保在其他内容之上 */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .delete-btn:hover {
+            background-color: #cc0000; /* 深红色 */
+        }
     </style>
 </head>
 <body>
@@ -218,6 +241,36 @@
                 const entryDiv = document.createElement('div');
                 entryDiv.className = 'image-entry';
                 entryDiv.dataset.base64Key = base64Key; // 存储 key 用于保存
+
+                // 创建删除按钮
+                const deleteBtn = document.createElement('span');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.innerHTML = '&times;'; // '×' 符号
+                deleteBtn.title = '删除此条目';
+
+                deleteBtn.addEventListener('click', function(event) {
+                    event.stopPropagation(); // 阻止事件冒泡到卡片或图片的其他点击事件
+
+                    if (!confirm(`确定要删除这个图片条目吗？\nKey (部分): ${base64Key.substring(0,20)}...`)) {
+                        return;
+                    }
+
+                    // 1. 从 imageCacheData 中删除
+                    if (imageCacheData.hasOwnProperty(base64Key)) {
+                        delete imageCacheData[base64Key];
+                        console.log(`Deleted ${base64Key} from cache data.`);
+                    }
+
+                    // 2. 从 DOM 中移除卡片
+                    entryDiv.remove();
+                    console.log(`Removed image entry for ${base64Key} from DOM.`);
+
+                    // 可选: 如果列表为空，显示提示信息
+                    if (Object.keys(imageCacheData).length === 0) {
+                        imageListDiv.innerHTML = '<p>缓存文件为空或所有条目已删除。</p>';
+                    }
+                });
+                entryDiv.appendChild(deleteBtn);
 
                 const title = document.createElement('h3');
                 title.textContent = `时间戳: ${entry.timestamp || 'N/A'}`;
