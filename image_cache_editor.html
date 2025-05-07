@@ -234,7 +234,10 @@
             return;
         }
 
-        for (const base64Key in imageCacheData) {
+        const imageKeys = Object.keys(imageCacheData).reverse(); // 获取键并反转顺序
+
+        for (const base64Key of imageKeys) {
+            // hasOwnProperty 检查在 Object.keys 之后理论上不是必需的，但保留也无妨
             if (imageCacheData.hasOwnProperty(base64Key)) {
                 const entry = imageCacheData[base64Key];
                 
