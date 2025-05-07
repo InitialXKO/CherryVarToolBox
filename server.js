@@ -555,12 +555,21 @@ async function handleDailyNote(noteBlockContent) {
 
     // console.log(`[handleDailyNote] 提取信息: Maid=${maidName}, Date=${dateString}`);
     const datePart = dateString.replace(/[.-]/g, '.'); // 统一日期分隔符
+
+    // NEW: Get current time and format it for filename
+    const now = new Date();
+    const hours = now.getHours().toString().padStart(2, '0');
+    const minutes = now.getMinutes().toString().padStart(2, '0');
+    const seconds = now.getSeconds().toString().padStart(2, '0');
+    const timeStringForFile = `${hours}_${minutes}_${seconds}`; // e.g., "23_59_59"
+
     const dirPath = path.join(__dirname, 'dailynote', maidName);
-    const baseFileNameWithoutExt = datePart; // e.g., "2025.5.2"
+    // MODIFIED: baseFileNameWithoutExt now includes time
+    const baseFileNameWithoutExt = `${datePart}-${timeStringForFile}`; // e.g., "2025.5.2-23_59_59"
     const fileExtension = '.txt';
-    let finalFileName = `${baseFileNameWithoutExt}${fileExtension}`; // Initial filename, e.g., "2025.5.2.txt"
+    let finalFileName = `${baseFileNameWithoutExt}${fileExtension}`; // e.g., "2025.5.2-23_59_59.txt"
     let filePath = path.join(dirPath, finalFileName);
-    let counter = 1;
+    // REMOVED: counter variable, as time-based filename should be unique enough.
 
     // console.log(`[handleDailyNote] 准备写入日记: 目录=${dirPath}, 基础文件名=${baseFileNameWithoutExt}`);
     // console.log(`[handleDailyNote] 日记文本内容 (前100字符): ${contentText.substring(0, 100)}...`);
@@ -571,27 +580,8 @@ async function handleDailyNote(noteBlockContent) {
         await fs.mkdir(dirPath, { recursive: true });
         // console.log(`[handleDailyNote] 目录已确保存在或已存在: ${dirPath}`);
 
-        // 循环检查文件名是否存在，如果存在则尝试添加序号
-        while (true) {
-            try {
-                await fs.access(filePath, fs.constants.F_OK); // 检查文件是否存在
-                // 文件存在，生成下一个带序号的文件名
-                finalFileName = `${baseFileNameWithoutExt}(${counter})${fileExtension}`; // e.g., "2025.5.2(1).txt"
-                filePath = path.join(dirPath, finalFileName);
-                counter++;
-                // console.log(`[handleDailyNote] 文件已存在，尝试下一个序号: ${finalFileName}`);
-            } catch (err) {
-                // 如果错误是 ENOENT (文件不存在)，说明找到了可用的文件名
-                if (err.code === 'ENOENT') {
-                    // console.log(`[handleDailyNote] 找到可用文件名: ${finalFileName}`);
-                    break; // 跳出循环，使用当前的 filePath
-                } else {
-                    // 如果是其他访问错误，则抛出异常
-                    console.error(`[handleDailyNote] 检查文件 ${filePath} 存在性时发生意外错误:`, err);
-                    throw err; // 重新抛出未预期的错误
-                }
-            }
-        }
+        // REMOVED: The while loop for checking file existence and adding counter.
+        // The new filename format (date-time) is expected to be unique enough.
 
         // 使用找到的最终文件名写入文件
         // console.log(`[handleDailyNote] 最终尝试写入文件: ${filePath}`);
