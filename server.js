@@ -12,6 +12,37 @@ const crypto = require('crypto'); // 新增：用于生成 UUID
 // 加载环境变量
 dotenv.config({ path: 'config.env' });
 
+// --- 新增：调试模式 ---
+const DEBUG_MODE = (process.env.DebugMode || "False").toLowerCase() === "true";
+const DEBUG_LOG_DIR = path.join(__dirname, 'DebugLog');
+
+async function ensureDebugLogDir() {
+    if (DEBUG_MODE) {
+        try {
+            await fs.mkdir(DEBUG_LOG_DIR, { recursive: true });
+        } catch (error) {
+            console.error(`创建 DebugLog 目录失败: ${DEBUG_LOG_DIR}`, error);
+        }
+    }
+}
+
+async function writeDebugLog(filenamePrefix, data) {
+    if (DEBUG_MODE) {
+        await ensureDebugLogDir(); // 确保目录存在
+        const now = new Date();
+        const timestamp = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}_${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}${now.getSeconds().toString().padStart(2, '0')}_${now.getMilliseconds().toString().padStart(3, '0')}`;
+        const filename = `${filenamePrefix}-${timestamp}.txt`;
+        const filePath = path.join(DEBUG_LOG_DIR, filename);
+        try {
+            await fs.writeFile(filePath, JSON.stringify(data, null, 2)); // 美化JSON输出
+            console.log(`[DebugLog] 已记录日志: ${filename}`);
+        } catch (error) {
+            console.error(`写入调试日志失败: ${filePath}`, error);
+        }
+    }
+}
+// --- 调试模式结束 ---
+
 // --- 新增：图片转译和缓存相关 ---
 const imageModelName = process.env.ImageModel;
 const imagePromptText = process.env.ImagePrompt;
@@ -22,6 +53,7 @@ const imageModelThinkingBudget = parseInt(process.env.ImageModelThinkingBudget, 
 // const imageModelContentMax = parseInt(process.env.ImageModelContent, 10); // 新增, 暂不直接使用于请求体
 const enableBase64Cache = (process.env.Base64Cache || "True").toLowerCase() === "true"; // 新增，默认为True
 const imageModelAsynchronousLimit = parseInt(process.env.ImageModelAsynchronous, 10) || 1; // 新增，定义多模态模型异步请求上限，默认为1
+const imageInsertPromptText = process.env.ImageInsertPrompt || "[检测到多模态数据，Var工具箱已自动提取图片信息，信息元如下——]"; // 从环境变量加载，带默认值
 // --- 图片转译和缓存相关结束 ---
 
 // --- 读取系统提示词转换规则 ---
@@ -369,14 +401,6 @@ async function fetchAndUpdateWeather() {
         let prompt = weatherPromptTemplate.replace(/\{\{Date\}\}/g, date);
         // WeatherPrompt 在 config.env 中已更新为 {{VarCity}}
         // 此处的替换逻辑将由 replaceCommonVariables 中的通用 {{Varxxx}} 处理
-        // 因此，在调用 fetchAndUpdateWeather 之前，weatherPromptTemplate 应该已经被 replaceCommonVariables 处理过
-        // 如果 fetchAndUpdateWeather 被独立调用（例如初始化时），则需要确保其 prompt 也能被正确替换
-        // 为了安全起见，我们在这里保留对 {{VarCity}} 的显式替换，以防 weatherPromptTemplate 未被完全处理
-        // 或者，更好的做法是确保 fetchAndUpdateWeather 接收的 prompt 已经是完全处理过的
-        // 考虑到 fetchAndUpdateWeather 可能会在 replaceCommonVariables 之外被调用（例如初始化），
-        // 并且其模板只包含 {{Date}} 和 {{VarCity}}，这里可以针对性处理。
-        // 但更统一的做法是，让 replaceCommonVariables 处理所有模板。
-        // 假设 weatherPromptTemplate 在这里已经是原始模板，需要替换
         prompt = prompt.replace(/\{\{VarCity\}\}/g, process.env.VarCity || '默认城市');
 
         // --- First API Call ---
@@ -728,6 +752,7 @@ async function translateImageAndCache(base64DataWithPrefix, imageIndexForLabel) 
 app.post('/v1/chat/completions', async (req, res) => {
     try {
         const originalBody = req.body;
+        await writeDebugLog('LogInput', originalBody); // 记录输入请求
         let globalImageIndexForLabel = 0; // 用于生成 IMAGE1Info, IMAGE2Info 标签
 
         // --- 图片转译和缓存处理 (根据 Base64Cache 开关决定是否执行) ---
@@ -768,7 +793,7 @@ app.post('/v1/chat/completions', async (req, res) => {
                             contentWithoutImages.unshift(userTextPart); // 加到最前面
                         }
                         // 将所有图片信息追加到文本末尾
-                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + '[检测到多模态数据，Var工具箱已自动提取图片信息，信息元如下——]\n' + allTranslatedImageTexts.join('\n');
+                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + imageInsertPromptText + '\n' + allTranslatedImageTexts.join('\n');
                         msg.content = contentWithoutImages; // 更新消息内容，移除图片，保留（或添加）文本
                         }
                     }
@@ -803,6 +828,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         // API 服务器应该处理无效的请求结构
 
         // 转发请求到 API 服务器
+        await writeDebugLog('LogOutput', originalBody); // 在发送前记录处理后的请求体
         const response = await fetch(`${apiUrl}/v1/chat/completions`, {
             method: 'POST',
             headers: {
@@ -838,12 +864,13 @@ app.post('/v1/chat/completions', async (req, res) => {
         });
 
         // 监听流结束
-        response.body.on('end', () => {
+        response.body.on('end', async () => { // <--- 将此回调设为 async
             res.end(); // 结束客户端的响应流
 
             // --- 在流结束后处理日记 (修改：先处理 SSE) ---
             const responseBuffer = Buffer.concat(chunks);
             const responseString = responseBuffer.toString('utf-8');
+            // await writeDebugLog('LogOutput', responseString); // 移除：不再记录AI的响应作为LogOutput
             // console.log('[DailyNote Check] 原始响应字符串 (前10000字符):', responseString.substring(0, 10000)); // Commented out raw string log
 
             let fullAiResponseText = '';
@@ -1031,5 +1058,6 @@ async function initialize() {
 app.listen(port, async () => {
     console.log(`中间层服务器正在监听端口 ${port}`);
     console.log(`API 服务器地址: ${apiUrl}`);
+    await ensureDebugLogDir(); // 应用启动时确保DebugLog目录存在
     await initialize(); // 初始化天气信息、表情包列表和定时任务
 });
