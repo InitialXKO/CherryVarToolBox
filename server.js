@@ -109,12 +109,9 @@ const port = process.env.PORT; // 从 env 或默认值获取端口
 const apiKey = process.env.API_Key; // API 服务器密钥
 const apiUrl = process.env.API_URL; // API 服务器地址
 const serverKey = process.env.Key; // 中间层认证密钥
-const systemInfo = process.env.VarSystemInfo; // 从 config.env 读取 VarSystemInfo
 const weatherInfoPath = process.env.VarWeatherInfo || 'Weather.txt'; // 从 config.env 读取 VarWeatherInfo
 const weatherModel = process.env.WeatherModel;
 const weatherPromptTemplate = process.env.WeatherPrompt; // WeatherPrompt 内部已使用 {{VarCity}}
-const city = process.env.VarCity; // 从 config.env 读取 VarCity
-const userInfo = process.env.VarUser; // 从 config.env 读取 VarUser
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
 const cachedEmojiLists = new Map(); // 使用 Map 存储所有表情包列表缓存
@@ -375,8 +372,6 @@ async function replaceCommonVariables(text) {
     }
     // --- 全局上下文转换结束 ---
 
-    // 替换 VarEmojiPrompt 中可能引入的 {{API_Key}} 占位符
-    // 这确保了如果 VarEmojiPrompt 的内容（其中包含 {{Image_Key}}）被注入到 processedText 中，
     // 这里的 {{Image_Key}} 会被替换成真实的 Image_Key 值。
     if (processedText && typeof processedText === 'string' && process.env.Image_Key) {
         processedText = processedText.replaceAll('{{Image_Key}}', process.env.Image_Key);
@@ -399,14 +394,40 @@ async function fetchAndUpdateWeather() {
         const now = new Date();
         const date = now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
         let prompt = weatherPromptTemplate.replace(/\{\{Date\}\}/g, date);
-        // WeatherPrompt 在 config.env 中已更新为 {{VarCity}}
-        // 此处的替换逻辑将由 replaceCommonVariables 中的通用 {{Varxxx}} 处理
-        prompt = prompt.replace(/\{\{VarCity\}\}/g, process.env.VarCity || '默认城市');
+        
+        // (上一行是 let prompt = weatherPromptTemplate.replace...)
+        
+        // 进行直接的“硬替换”
+        const cityValue = process.env.VarCity; // 获取城市值
+        
+        if (cityValue === undefined) {
+             console.error("[WeatherFetch] VarCity is not defined in process.env!");
+        }
+        
+        // 替换 VarCity (如果 cityValue 是 undefined, 则替换为提示)
+        const cityToReplaceWith = cityValue !== undefined ? cityValue : '[未配置 VarCity]';
+        const originalPromptBeforeCityReplace = prompt; // 保存替换前的状态用于比较
+        prompt = prompt.replaceAll('{{VarCity}}', cityToReplaceWith);
+
+        // 添加检查：确认替换是否发生
+        if (prompt.includes('{{VarCity}}') && cityValue !== undefined) {
+             // 如果替换后仍然包含占位符（且城市值存在），说明替换失败
+             console.error(`[WeatherFetch] CRITICAL: Failed to replace {{VarCity}} in prompt! Check WeatherPrompt in config.env. Result: "${prompt}"`);
+        } else if (prompt === originalPromptBeforeCityReplace && cityValue !== undefined && weatherPromptTemplate.includes('{{VarCity}}')) {
+             // 如果字符串没变，但城市值存在且模板包含占位符，也说明替换失败
+             console.error(`[WeatherFetch] CRITICAL: Replacement of {{VarCity}} seems to have failed silently! Check WeatherPrompt in config.env. Prompt remains: "${prompt}"`);
+        } else if (cityValue !== undefined) {
+             console.log(`[WeatherFetch] Successfully prepared prompt with city: ${cityToReplaceWith}`);
+        }
+        
+        // 注意：这里不再处理其他的 {{Varxxx}} 变量，只处理 Date 和 VarCity
+        // 将最终使用的变量名改回 prompt (因为不再有 finalPrompt)
 
         // --- First API Call ---
         const weatherModelMaxTokens = parseInt(process.env.WeatherModelMaxTokens, 10); // 读取配置
         const firstApiPayload = {
             model: weatherModel,
+            // 使用在 fetchAndUpdateWeather 内部直接替换处理后的 prompt
             messages: [{ role: 'user', content: prompt }],
             tools: [
                 {
