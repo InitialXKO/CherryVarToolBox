@@ -36,6 +36,7 @@
 *   `Image_Key`: 用于图片服务路径鉴权的密钥。
 *   `Port`: 中间层服务器监听的端口 (例如 `5890`)。
 *   `Key`: 客户端访问中间层服务器所需的认证密钥 (例如 `123456`)。
+*   `DebugMode`: 调试模式，开启后会自动打印输入输出日志。
 *   `VarSystemInfo`: 自定义系统信息变量 (`{{VarSystemInfo}}`) 的值。
 *   `VarWeatherInfo`: 缓存天气信息的文件路径 (默认为 `Weather.txt`)。
 *   `VarCity`: 获取天气的目标城市 (`{{VarCity}}`)。
