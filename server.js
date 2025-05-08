@@ -130,13 +130,11 @@ const imageAuthMiddleware = (req, res, next) => {
     if (pathSegmentWithKey && pathSegmentWithKey.startsWith('pw=')) {
         const requestImageKey = pathSegmentWithKey.substring(3); // 提取 "pw=" 后面的部分
         if (requestImageKey === serverImageKeyForAuth) {
-            next(); // Key 有效，继续处理请求
+            next();
         } else {
-            // console.warn(`图片访问鉴权失败: 提供的 Key "${requestImageKey}" 无效`);
             return res.status(401).type('text/plain').send('Unauthorized: Invalid key for image access.');
         }
     } else {
-        // console.warn(`图片访问鉴权失败: 路径格式不正确 "${pathSegmentWithKey}"`);
         return res.status(400).type('text/plain').send('Bad Request: Invalid image access path format.');
     }
 };
@@ -150,7 +148,7 @@ console.log(`受保护的图片服务已启动，访问路径格式: /pw=YOUR_IM
 // 中间件：记录所有传入请求
 app.use((req, res, next) => {
     console.log(`[${new Date().toLocaleString()}] Received ${req.method} request for ${req.url} from ${req.ip}`);
-    next(); // 继续处理请求
+    next();
 });
 // 中间件：认证
 app.use((req, res, next) => {
@@ -460,14 +458,12 @@ async function fetchAndUpdateWeather() {
         }
 
         let data = await response.json();
-        // Removed Raw data log
-
+        
         const firstChoice = data.choices?.[0];
         const message = firstChoice?.message;
 
         // --- Check for Tool Calls ---
         if (firstChoice?.finish_reason === 'tool_calls' && message?.tool_calls) {
-            // Removed log marker
             const toolCalls = message.tool_calls;
 
             // Prepare messages for the second API call
@@ -479,7 +475,6 @@ async function fetchAndUpdateWeather() {
             // Add tool results (we assume the proxy handles execution, send back arguments as placeholder result)
             for (const toolCall of toolCalls) {
                  if (toolCall.type === 'function' && toolCall.function.name === 'google_search') {
-                     // Removed tool result log
                      messagesForSecondCall.push({
                          role: 'tool',
                          tool_call_id: toolCall.id,
@@ -491,7 +486,6 @@ async function fetchAndUpdateWeather() {
             }
 
             // --- Second API Call ---
-            // Removed log marker
             const secondApiPayload = {
                 model: weatherModel,
                 messages: messagesForSecondCall,
@@ -519,15 +513,12 @@ async function fetchAndUpdateWeather() {
             }
 
             data = await response.json();
-            // Removed Raw data log
         } else {
-             // Removed log marker
         }
 
         // --- Process Final Response ---
         let weatherContent = data.choices?.[0]?.message?.content || '';
         console.log('Final extracted content:', weatherContent); // Keep log for final content
-        // Removed log marker
 
         const match = weatherContent.match(/\[WeatherInfo:(.*?)\]/s); // 使用 s 标志使 . 匹配换行符
         if (match && match[1]) {
@@ -553,7 +544,6 @@ async function fetchAndUpdateWeather() {
 // --- 日记处理函数 ---
 // --- 修改：handleDailyNote 处理新的结构化格式 ---
 async function handleDailyNote(noteBlockContent) {
-    // console.log('[handleDailyNote] 开始处理新的结构化日记块...');
     const lines = noteBlockContent.trim().split('\n');
     let maidName = null;
     let dateString = null;
@@ -588,7 +578,6 @@ async function handleDailyNote(noteBlockContent) {
         return;
     }
 
-    // console.log(`[handleDailyNote] 提取信息: Maid=${maidName}, Date=${dateString}`);
     const datePart = dateString.replace(/[.-]/g, '.'); // 统一日期分隔符
 
     // NEW: Get current time and format it for filename
@@ -604,19 +593,12 @@ async function handleDailyNote(noteBlockContent) {
     const fileExtension = '.txt';
     let finalFileName = `${baseFileNameWithoutExt}${fileExtension}`; // e.g., "2025.5.2-23_59_59.txt"
     let filePath = path.join(dirPath, finalFileName);
-    // REMOVED: counter variable, as time-based filename should be unique enough.
-
-    // console.log(`[handleDailyNote] 准备写入日记: 目录=${dirPath}, 基础文件名=${baseFileNameWithoutExt}`);
-    // console.log(`[handleDailyNote] 日记文本内容 (前100字符): ${contentText.substring(0, 100)}...`);
 
     try {
         // 确保目录存在
-        // console.log(`[handleDailyNote] 尝试创建目录: ${dirPath}`);
         await fs.mkdir(dirPath, { recursive: true });
-        // console.log(`[handleDailyNote] 目录已确保存在或已存在: ${dirPath}`);
 
         // 使用找到的最终文件名写入文件
-        // console.log(`[handleDailyNote] 最终尝试写入文件: ${filePath}`);
         await fs.writeFile(filePath, `[${datePart}] - ${maidName}\n${contentText}`); // 在内容前添加 [日期] - 署名 头
         console.log(`[handleDailyNote] 日记文件写入成功: ${filePath}`); // 记录最终写入的文件路径
     } catch (error) {
@@ -637,7 +619,6 @@ async function handleDailyNote(noteBlockContent) {
 async function saveImageCache() {
     try {
         await fs.writeFile(imageCacheFilePath, JSON.stringify(imageBase64Cache, null, 2));
-        // console.log(`图片 Base64 缓存已保存到 ${imageCacheFilePath}`); // 可以取消注释以进行调试
     } catch (error) {
         console.error(`保存图片 Base64 缓存到 ${imageCacheFilePath} 失败:`, error);
     }
@@ -878,8 +859,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             // --- 在流结束后处理日记 (修改：先处理 SSE) ---
             const responseBuffer = Buffer.concat(chunks);
             const responseString = responseBuffer.toString('utf-8');
-            // await writeDebugLog('LogOutput', responseString); // 移除：不再记录AI的响应作为LogOutput
-            // console.log('[DailyNote Check] 原始响应字符串 (前10000字符):', responseString.substring(0, 10000)); // Commented out raw string log
 
             let fullAiResponseText = '';
             let successfullyParsed = false;
@@ -940,9 +919,7 @@ app.post('/v1/chat/completions', async (req, res) => {
             // --- Step 3: 在提取到的文本上匹配日记标记 ---
             let match = null; // 初始化 match 为 null
             if (successfullyParsed && fullAiResponseText) {
-                // console.log('[DailyNote Check] 提取到的 AI 回复文本 (前10000字符):', fullAiResponseText.substring(0, 10000));
                 const dailyNoteRegex = /<<<DailyNoteStart>>>(.*?)<<<DailyNoteEnd>>>/s;
-                // console.log('[DailyNote Check] 在提取文本上使用正则表达式:', dailyNoteRegex);
                 match = fullAiResponseText.match(dailyNoteRegex); // 在这里进行匹配
             } else if (!successfullyParsed) {
                 console.log('[DailyNote Check] 未能成功解析响应内容，跳过日记标记检查。');
@@ -960,7 +937,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
             // --- 日记处理逻辑修改结束 ---
 
-            // 原有的 JSON 解析逻辑已被包含在上面的 SSE 处理中或不再需要，故移除/注释
         });
 
         // 监听流错误
