@@ -114,7 +114,6 @@ const weatherInfoPath = process.env.VarWeatherInfo || 'Weather.txt'; // 从 conf
 const weatherModel = process.env.WeatherModel;
 const weatherPromptTemplate = process.env.WeatherPrompt; // WeatherPrompt 内部已使用 {{VarCity}}
 const city = process.env.VarCity; // 从 config.env 读取 VarCity
-const emojiPromptTemplate = process.env.VarEmojiPrompt; // 从 config.env 读取 VarEmojiPrompt
 const userInfo = process.env.VarUser; // 从 config.env 读取 VarUser
 
 let cachedWeatherInfo = ''; // 用于缓存天气信息的变量
@@ -124,9 +123,7 @@ const cachedEmojiLists = new Map(); // 使用 Map 存储所有表情包列表缓
 app.use(express.json({ limit: '300mb' })); // 将 JSON 限制增加到 300MB
 app.use(express.urlencoded({ limit: '300mb', extended: true })); // 将 URL 编码限制增加到 300MB
 
-// --- 提供静态图片文件 (修改为带鉴权) ---
-// app.use('/images', express.static(path.join(__dirname, 'image'))); // 旧的无鉴权服务，将被移除或注释
-// console.log(`图片服务已启动，访问路径: /images`);
+// --- 提供静态图片文件 ---
 
 // 新的图片访问鉴权中间件
 const imageAuthMiddleware = (req, res, next) => {
@@ -152,7 +149,6 @@ const imageAuthMiddleware = (req, res, next) => {
 // :pathSegmentWithKey 会捕获 "pw=KEY" 这部分
 app.use('/:pathSegmentWithKey/images', imageAuthMiddleware, express.static(path.join(__dirname, 'image')));
 console.log(`受保护的图片服务已启动，访问路径格式: /pw=YOUR_IMAGE_KEY/images/...`);
-// 旧的 /images 路径不再直接可用
 
 // 中间件：记录所有传入请求
 app.use((req, res, next) => {
@@ -215,7 +211,7 @@ async function updateAndLoadAgentEmojiList(agentName, dirPath, filePath) {
 }
 
 // --- 变量替换逻辑 ---
-// 注意：这个函数现在处理所有通用变量，包括 EmojiPrompt
+// 注意：这个函数现在处理所有通用变量
 async function replaceCommonVariables(text) {
     // 首先检查 text 是否为 null 或 undefined，如果是，则直接返回空字符串或进行其他适当处理
     if (text == null) {
@@ -232,11 +228,11 @@ async function replaceCommonVariables(text) {
     const time = now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
     processedText = processedText.replace(/\{\{Time\}\}/g, time);
 
-    // {{Today}}
+    // {{Today}} - 星期
     const today = now.toLocaleDateString('zh-CN', { weekday: 'long', timeZone: 'Asia/Shanghai' });
     processedText = processedText.replace(/\{\{Today\}\}/g, today);
 
-    // {{Festival}}
+    // {{Festival}} - 农历
     const year = now.getFullYear();
     const month = now.getMonth() + 1; // getMonth() 返回 0-11，需要加 1
     const day = now.getDate();
@@ -248,20 +244,15 @@ async function replaceCommonVariables(text) {
     }
     processedText = processedText.replace(/\{\{Festival\}\}/g, festivalInfo);
 
-    // {{SystemInfo}} - 现在将通过下面的通用 Varxxx 逻辑处理
-    // processedText = processedText.replace(/\{\{SystemInfo\}\}/g, systemInfo || '未配置系统信息'); // 由通用逻辑处理
-
     // {{WeatherInfo}} - 这个比较特殊，它不是 Var 开头，但也是动态替换
     processedText = processedText.replace(/\{\{WeatherInfo\}\}/g, cachedWeatherInfo || '天气信息不可用');
 
-    // {{City}} - 由通用 {{VarCity}} 逻辑处理
-    // processedText = processedText.replace(/\{\{City\}\}/g, city || '未配置城市');
-
-    // {{User}} - 由通用 {{VarUser}} 逻辑处理
-    // processedText = processedText.replace(/\{\{User\}\}/g, userInfo || '未配置用户信息');
-
     // --- 通用处理 {{Varxxx}} 占位符 ---
     // 这个循环应该在其他特定占位符（如 Date, Time, WeatherInfo）之后，但在表情包、日记等复杂逻辑之前
+// 首先处理 {{EmojiPrompt}} 占位符，将其替换为完整的 EmojiPrompt 字符串
+    if (process.env.EmojiPrompt) {
+        processedText = processedText.replaceAll('{{EmojiPrompt}}', process.env.EmojiPrompt);
+    }
     for (const envKey in process.env) {
         if (envKey.startsWith('Var')) {
             const placeholder = `{{${envKey}}}`; // 例如 {{VarCity}}
@@ -270,6 +261,27 @@ async function replaceCommonVariables(text) {
         }
     }
     // --- {{Varxxx}} 处理结束 ---
+// 确保在 EmojiPrompt 等变量被替换后，其内部的特定占位符也能被处理
+    if (process.env.PORT) {
+        processedText = processedText.replaceAll('{{Port}}', process.env.PORT);
+    }
+    // {{Image_Key}} 的替换在函数末尾，{{通用表情包}} 的替换在后续的表情包逻辑中
+// 新增：处理由 EmojiPrompt 引入的 {{EmojiList}} 占位符
+    if (processedText.includes('{{EmojiList}}') && process.env.EmojiList) {
+        const emojiListFileName = process.env.EmojiList; // e.g., "通用表情包.txt"
+        // 从文件名中提取表情包名称作为缓存的键 (e.g., "通用表情包")
+        const emojiCacheKey = emojiListFileName.replace(/\.txt$/i, '').trim(); 
+        
+        const specificEmojiListContent = cachedEmojiLists.get(emojiCacheKey);
+        
+        if (specificEmojiListContent !== undefined) {
+            processedText = processedText.replaceAll('{{EmojiList}}', specificEmojiListContent);
+        } else {
+            // 如果列表在缓存中找不到，替换为一个提示信息
+            processedText = processedText.replaceAll('{{EmojiList}}', `[名为 ${emojiCacheKey} 的表情列表不可用 (源: ${emojiListFileName})]`);
+            console.warn(`[EmojiList Variable] 未能从缓存中找到 ${emojiCacheKey} 的列表 (通过 EmojiList 环境变量指定，值为: ${emojiListFileName})`);
+        }
+    }
 
    // --- 动态处理 {{xx表情包}} 占位符 ---
    const emojiPlaceholderRegex = /\{\{(.+?表情包)\}\}/g;
@@ -281,18 +293,6 @@ async function replaceCommonVariables(text) {
        processedText = processedText.replaceAll(placeholder, emojiList || `${emojiName}列表不可用`);
    }
 
-   // {{EmojiPrompt}} - 动态生成通用 Emoji 提示 (现在依赖于 {{通用表情包}} 占位符)
-   if (processedText.includes('{{EmojiPrompt}}')) {
-       let finalEmojiPrompt = '';
-       if (emojiPromptTemplate) {
-           // EmojiPrompt 模板现在应该包含 {{通用表情包}}
-           // 我们需要先替换掉 EmojiPrompt 模板内的 {{通用表情包}}
-           const generalEmojiList = cachedEmojiLists.get('通用表情包');
-           finalEmojiPrompt = emojiPromptTemplate.replace(/\{\{通用表情包\}\}/g, generalEmojiList || '通用表情包列表不可用');
-       }
-       // 使用正则表达式进行全局替换，以防原始文本中出现多个 {{EmojiPrompt}}
-       processedText = processedText.replace(/\{\{EmojiPrompt\}\}/g, finalEmojiPrompt);
-   }
 
 // --- 处理 {{角色名日记本}} 占位符 ---
     const diaryPlaceholderRegex = /\{\{(.+?)日记本\}\}/g;
@@ -603,9 +603,6 @@ async function handleDailyNote(noteBlockContent) {
         // console.log(`[handleDailyNote] 尝试创建目录: ${dirPath}`);
         await fs.mkdir(dirPath, { recursive: true });
         // console.log(`[handleDailyNote] 目录已确保存在或已存在: ${dirPath}`);
-
-        // REMOVED: The while loop for checking file existence and adding counter.
-        // The new filename format (date-time) is expected to be unique enough.
 
         // 使用找到的最终文件名写入文件
         // console.log(`[handleDailyNote] 最终尝试写入文件: ${filePath}`);
