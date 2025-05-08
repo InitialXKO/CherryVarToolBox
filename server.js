@@ -390,38 +390,28 @@ async function fetchAndUpdateWeather() {
     }
 
     try {
-        // 替换 Prompt 中的变量 (只需要 Date 和 City)
-        const now = new Date();
-        const date = now.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
-        let prompt = weatherPromptTemplate.replace(/\{\{Date\}\}/g, date);
-        
-        // (上一行是 let prompt = weatherPromptTemplate.replace...)
-        
-        // 进行直接的“硬替换”
-        const cityValue = process.env.VarCity; // 获取城市值
-        
-        if (cityValue === undefined) {
-             console.error("[WeatherFetch] VarCity is not defined in process.env!");
-        }
-        
-        // 替换 VarCity (如果 cityValue 是 undefined, 则替换为提示)
-        const cityToReplaceWith = cityValue !== undefined ? cityValue : '[未配置 VarCity]';
-        const originalPromptBeforeCityReplace = prompt; // 保存替换前的状态用于比较
-        prompt = prompt.replaceAll('{{VarCity}}', cityToReplaceWith);
+        // 使用 replaceCommonVariables 来处理模板中的所有已知变量，包括 {{Date}} 和 {{VarCity}}
+        let prompt = await replaceCommonVariables(weatherPromptTemplate);
 
-        // 添加检查：确认替换是否发生
-        if (prompt.includes('{{VarCity}}') && cityValue !== undefined) {
-             // 如果替换后仍然包含占位符（且城市值存在），说明替换失败
-             console.error(`[WeatherFetch] CRITICAL: Failed to replace {{VarCity}} in prompt! Check WeatherPrompt in config.env. Result: "${prompt}"`);
-        } else if (prompt === originalPromptBeforeCityReplace && cityValue !== undefined && weatherPromptTemplate.includes('{{VarCity}}')) {
-             // 如果字符串没变，但城市值存在且模板包含占位符，也说明替换失败
-             console.error(`[WeatherFetch] CRITICAL: Replacement of {{VarCity}} seems to have failed silently! Check WeatherPrompt in config.env. Prompt remains: "${prompt}"`);
-        } else if (cityValue !== undefined) {
-             console.log(`[WeatherFetch] Successfully prepared prompt with city: ${cityToReplaceWith}`);
+        // 可选：添加日志以确认 prompt 的内容，特别是 VarCity 是否按预期被替换
+        // 检查 VarCity 是否未配置，并且提示中是否包含 "[未配置VarCity]"
+        if (process.env.VarCity === undefined && prompt.includes('[未配置VarCity]')) {
+            console.log(`[WeatherFetch] VarCity is not configured. Placeholder '[未配置VarCity]' is present in prompt as expected after replaceCommonVariables.`);
         }
-        
-        // 注意：这里不再处理其他的 {{Varxxx}} 变量，只处理 Date 和 VarCity
-        // 将最终使用的变量名改回 prompt (因为不再有 finalPrompt)
+        // 检查 VarCity 是否已配置，并且提示中不再包含 "{{VarCity}}" 或 "[未配置VarCity]"
+        else if (process.env.VarCity !== undefined && !prompt.includes('{{VarCity}}') && !prompt.includes('[未配置VarCity]')) {
+            console.log(`[WeatherFetch] VarCity (${process.env.VarCity}) appears to be correctly replaced in prompt by replaceCommonVariables. Prompt (first 100 chars): "${prompt.substring(0,100)}..."`);
+        }
+        // 检查 VarCity 是否已配置，但提示中仍然存在占位符或 "未配置" 提示 (异常情况)
+        else if (process.env.VarCity !== undefined && (prompt.includes('{{VarCity}}') || prompt.includes('[未配置VarCity]'))) {
+            // This case implies VarCity is defined, but the prompt still shows it as a placeholder or "not configured".
+            // This could happen if replaceCommonVariables failed to replace it, or if VarCity's value itself is "{{VarCity}}" or "[未配置VarCity]".
+            console.warn(`[WeatherFetch] Warning: VarCity (${process.env.VarCity}) might NOT have been properly replaced or its value is problematic. Prompt still contains '{{VarCity}}' or '[未配置VarCity]'. Prompt (first 100 chars): "${prompt.substring(0,100)}..."`);
+        }
+        // 检查 VarCity 是否未配置，但提示中也不包含 "[未配置VarCity]" 或 "{{VarCity}}" (可能是一个空的 VarCity 值被替换了, 或者模板中就没有VarCity)
+        else if (process.env.VarCity === undefined && !prompt.includes('[未配置VarCity]') && !prompt.includes('{{VarCity}}')) {
+             console.log(`[WeatherFetch] VarCity is not configured, and placeholder '[未配置VarCity]' or '{{VarCity}}' is NOT in prompt. This is okay if VarCity was an empty string or not in template. Prompt (first 100 chars): "${prompt.substring(0,100)}..."`);
+        }
 
         // --- First API Call ---
         const weatherModelMaxTokens = parseInt(process.env.WeatherModelMaxTokens, 10); // 读取配置
