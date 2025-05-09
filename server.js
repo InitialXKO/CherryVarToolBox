@@ -51,7 +51,6 @@ let imageBase64Cache = {}; // 内存缓存
 const imageModelOutputMaxTokens = parseInt(process.env.ImageModelOutput, 10) || 1024; // 新增，带默认值
 const imageModelThinkingBudget = parseInt(process.env.ImageModelThinkingBudget, 10); // 新增, 可选
 // const imageModelContentMax = parseInt(process.env.ImageModelContent, 10); // 新增, 暂不直接使用于请求体
-const enableBase64Cache = (process.env.Base64Cache || "True").toLowerCase() === "true"; // 新增，默认为True
 const imageModelAsynchronousLimit = parseInt(process.env.ImageModelAsynchronous, 10) || 1; // 新增，定义多模态模型异步请求上限，默认为1
 const imageInsertPromptText = process.env.ImageInsertPrompt || "[检测到多模态数据，Var工具箱已自动提取图片信息，信息元如下——]"; // 从环境变量加载，带默认值
 // --- 图片转译和缓存相关结束 ---
@@ -773,53 +772,92 @@ app.post('/v1/chat/completions', async (req, res) => {
         await writeDebugLog('LogInput', originalBody); // 记录输入请求
         let globalImageIndexForLabel = 0; // 用于生成 IMAGE1Info, IMAGE2Info 标签
 
-        // --- 图片转译和缓存处理 (根据 Base64Cache 开关决定是否执行) ---
-        if (enableBase64Cache) {
-            console.log('[Base64Cache] 功能已启用，开始处理图片...');
-            if (originalBody.messages && Array.isArray(originalBody.messages)) {
-                for (let i = 0; i < originalBody.messages.length; i++) {
-                    const msg = originalBody.messages[i];
-                if (msg.role === 'user' && Array.isArray(msg.content)) {
-                    const imagePartsToTranslate = [];
-                    const contentWithoutImages = []; // 用于重建消息内容
-
-                    for (const part of msg.content) {
-                        if (part.type === 'image_url' && part.image_url && typeof part.image_url.url === 'string' && part.image_url.url.startsWith('data:image')) {
-                            imagePartsToTranslate.push(part.image_url.url);
-                        } else {
-                            contentWithoutImages.push(part);
+        // --- 新逻辑：检测 {{ShowBase64}} 占位符来决定是否启用图片处理 ---
+        let shouldProcessImages = false;
+        if (originalBody.messages && Array.isArray(originalBody.messages)) {
+            for (const msg of originalBody.messages) {
+                // 检查用户和系统消息中是否存在占位符
+                if (msg.role === 'user' || msg.role === 'system') {
+                    if (typeof msg.content === 'string' && msg.content.includes('{{ShowBase64}}')) {
+                        shouldProcessImages = true;
+                        break;
+                    } else if (Array.isArray(msg.content)) {
+                        for (const part of msg.content) {
+                            if (part.type === 'text' && typeof part.text === 'string' && part.text.includes('{{ShowBase64}}')) {
+                                shouldProcessImages = true;
+                                break;
+                            }
                         }
                     }
+                }
+                if (shouldProcessImages) break;
+            }
+        }
+        // --- 新逻辑结束 ---
 
-                    if (imagePartsToTranslate.length > 0) {
-                        const allTranslatedImageTexts = [];
-                        console.log(`[ImageAsync] 准备处理 ${imagePartsToTranslate.length} 张图片，并发上限: ${imageModelAsynchronousLimit}`);
-                        for (let i = 0; i < imagePartsToTranslate.length; i += imageModelAsynchronousLimit) {
-                            const chunkToTranslate = imagePartsToTranslate.slice(i, i + imageModelAsynchronousLimit);
-                            console.log(`[ImageAsync] 处理批次: ${Math.floor(i / imageModelAsynchronousLimit) + 1}, 图片数量: ${chunkToTranslate.length}`);
-                            const translationPromisesInChunk = chunkToTranslate.map((base64Url) =>
-                                translateImageAndCache(base64Url, globalImageIndexForLabel++) // globalImageIndexForLabel 仍然为每个图片独立递增
-                            );
-                            const translatedTextsInChunk = await Promise.all(translationPromisesInChunk);
-                            allTranslatedImageTexts.push(...translatedTextsInChunk);
-                        }
-                        console.log(`[ImageAsync] 所有图片处理完成，共获得 ${allTranslatedImageTexts.length} 条描述。`);
+        // --- 图片转译和缓存处理 (根据 shouldProcessImages 开关决定是否执行) ---
+        if (shouldProcessImages) {
+            console.log('[ImageProcessing] 功能已启用 (检测到 {{ShowBase64}})，开始处理图片...');
+            if (originalBody.messages && Array.isArray(originalBody.messages)) {
+                // 图片处理逻辑主要针对用户消息中的图片部分
+                for (let i = 0; i < originalBody.messages.length; i++) {
+                    const msg = originalBody.messages[i];
+                    if (msg.role === 'user' && Array.isArray(msg.content)) {
+                        const imagePartsToTranslate = [];
+                        const contentWithoutImages = [];
 
-                        let userTextPart = contentWithoutImages.find(p => p.type === 'text');
-                        if (!userTextPart) {
-                            userTextPart = { type: 'text', text: '' };
-                            contentWithoutImages.unshift(userTextPart); // 加到最前面
+                        for (const part of msg.content) {
+                            if (part.type === 'image_url' && part.image_url && typeof part.image_url.url === 'string' && part.image_url.url.startsWith('data:image')) {
+                                imagePartsToTranslate.push(part.image_url.url);
+                            } else {
+                                contentWithoutImages.push(part);
+                            }
                         }
-                        // 将所有图片信息追加到文本末尾
-                        userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + imageInsertPromptText + '\n' + allTranslatedImageTexts.join('\n');
-                        msg.content = contentWithoutImages; // 更新消息内容，移除图片，保留（或添加）文本
+
+                        if (imagePartsToTranslate.length > 0) {
+                            const allTranslatedImageTexts = [];
+                            console.log(`[ImageAsync] 准备处理 ${imagePartsToTranslate.length} 张图片，并发上限: ${imageModelAsynchronousLimit}`);
+                            // 使用不同的循环变量名 (j) 避免与外部循环变量 (i) 冲突
+                            for (let j = 0; j < imagePartsToTranslate.length; j += imageModelAsynchronousLimit) {
+                                const chunkToTranslate = imagePartsToTranslate.slice(j, j + imageModelAsynchronousLimit);
+                                console.log(`[ImageAsync] 处理批次: ${Math.floor(j / imageModelAsynchronousLimit) + 1}, 图片数量: ${chunkToTranslate.length}`);
+                                const translationPromisesInChunk = chunkToTranslate.map((base64Url) =>
+                                    translateImageAndCache(base64Url, globalImageIndexForLabel++)
+                                );
+                                const translatedTextsInChunk = await Promise.all(translationPromisesInChunk);
+                                allTranslatedImageTexts.push(...translatedTextsInChunk);
+                            }
+                            console.log(`[ImageAsync] 所有图片处理完成，共获得 ${allTranslatedImageTexts.length} 条描述。`);
+
+                            let userTextPart = contentWithoutImages.find(p => p.type === 'text');
+                            if (!userTextPart) {
+                                userTextPart = { type: 'text', text: '' };
+                                contentWithoutImages.unshift(userTextPart);
+                            }
+                            userTextPart.text = (userTextPart.text ? userTextPart.text.trim() + '\n' : '') + imageInsertPromptText + '\n' + allTranslatedImageTexts.join('\n');
+                            msg.content = contentWithoutImages;
+                        }
+                    }
+                }
+                
+                // 图片处理完成后，从所有消息中移除 {{ShowBase64}} 占位符
+                for (const msg of originalBody.messages) {
+                    if (msg.role === 'user' || msg.role === 'system') {
+                        if (typeof msg.content === 'string') {
+                            msg.content = msg.content.replace(/\{\{ShowBase64\}\}/g, '');
+                        } else if (Array.isArray(msg.content)) {
+                            for (const part of msg.content) {
+                                if (part.type === 'text' && typeof part.text === 'string') {
+                                    part.text = part.text.replace(/\{\{ShowBase64\}\}/g, '');
+                                }
+                            }
                         }
                     }
                 }
             }
-            console.log('[Base64Cache] 图片处理完成。');
+            console.log('[ImageProcessing] 图片处理完成。');
         } else {
-            console.log('[Base64Cache] 功能已禁用，跳过图片转译和缓存处理。');
+            console.log('[ImageProcessing] 功能已禁用 (未检测到 {{ShowBase64}})，跳过图片转译和缓存处理。');
         }
         // --- 图片转译和缓存处理结束 ---
 
