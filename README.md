@@ -4,6 +4,8 @@
 
 ### *警告：请勿使用非官方API(例如反代中间商)来调用此工具箱，避免造成不可挽回的信息泄露。*
 
+![图片替代文本](https://cdn.jsdelivr.net/gh/lioensky/CherryVarToolBox@main/Example.jpg)
+
 ## 主要功能
 
 *   **通用变量替换**: 拦截发往 `/v1/chat/completions` 的请求，自动替换请求体 JSON 中 `messages` 数组内字符串内容里的特定占位符变量（见下方“支持的变量”）。支持文本和 Vision 请求格式。
