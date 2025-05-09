@@ -1,6 +1,6 @@
 // server.js
 const express = require('express');
-const fetch = require('node-fetch');
+// const fetch = require('node-fetch'); // Replaced with dynamic import where needed
 const dotenv = require('dotenv');
 const schedule = require('node-schedule');
 const lunarCalendar = require('chinese-lunar-calendar'); // 导入整个模块
@@ -143,7 +143,13 @@ const imageAuthMiddleware = (req, res, next) => {
 // 匹配 /pw=KEY/images/* 格式
 // :pathSegmentWithKey 会捕获 "pw=KEY" 这部分
 app.use('/:pathSegmentWithKey/images', imageAuthMiddleware, express.static(path.join(__dirname, 'image')));
-console.log(`受保护的图片服务已启动，访问路径格式: /pw=YOUR_IMAGE_KEY/images/...`);
+const imageKeyForLog = process.env.Image_Key || "";
+const maskedImageKey = imageKeyForLog.length > 6
+    ? imageKeyForLog.substring(0,3) + "***" + imageKeyForLog.slice(-3)
+    : (imageKeyForLog.length > 1
+        ? imageKeyForLog[0] + "***" + imageKeyForLog.slice(-1)
+        : (imageKeyForLog.length === 1 ? "*" : "NOT_SET"));
+console.log(`受保护的图片服务已启动，访问路径格式: /pw=${maskedImageKey}/images/...`);
 
 // 中间件：记录所有传入请求
 app.use((req, res, next) => {
@@ -380,6 +386,7 @@ async function replaceCommonVariables(text) {
 
 // --- 天气获取与缓存逻辑 ---
 async function fetchAndUpdateWeather() {
+    const { default: fetch } = await import('node-fetch');
     console.log('尝试获取最新的天气信息...');
     if (!apiUrl || !apiKey || !weatherModel || !weatherPromptTemplate) {
         console.error('获取天气所需的配置不完整 (API_URL, API_Key, WeatherModel, WeatherPrompt)');
@@ -646,6 +653,7 @@ async function saveImageCache() {
 
 // --- 新增：图片转译和缓存核心逻辑 ---
 async function translateImageAndCache(base64DataWithPrefix, imageIndexForLabel) {
+    const { default: fetch } = await import('node-fetch');
     // 提取纯 Base64 数据
     const base64PrefixPattern = /^data:image\/[^;]+;base64,/;
     const pureBase64Data = base64DataWithPrefix.replace(base64PrefixPattern, '');
@@ -759,6 +767,7 @@ async function translateImageAndCache(base64DataWithPrefix, imageIndexForLabel) 
 
 
 app.post('/v1/chat/completions', async (req, res) => {
+    const { default: fetch } = await import('node-fetch');
     try {
         const originalBody = req.body;
         await writeDebugLog('LogInput', originalBody); // 记录输入请求
