@@ -772,32 +772,38 @@ app.post('/v1/chat/completions', async (req, res) => {
         await writeDebugLog('LogInput', originalBody); // 记录输入请求
         let globalImageIndexForLabel = 0; // 用于生成 IMAGE1Info, IMAGE2Info 标签
 
-        // --- 新逻辑：检测 {{ShowBase64}} 占位符来决定是否启用图片处理 ---
-        let shouldProcessImages = false;
+        // --- 新逻辑：检测 {{ShowBase64}} 占位符来决定是否禁用图片处理 ---
+        let shouldProcessImages = true; // 默认启用图片处理
         if (originalBody.messages && Array.isArray(originalBody.messages)) {
             for (const msg of originalBody.messages) {
+                let foundPlaceholderInMsg = false;
                 // 检查用户和系统消息中是否存在占位符
                 if (msg.role === 'user' || msg.role === 'system') {
                     if (typeof msg.content === 'string' && msg.content.includes('{{ShowBase64}}')) {
-                        shouldProcessImages = true;
-                        break;
+                        foundPlaceholderInMsg = true;
+                        msg.content = msg.content.replace(/\{\{ShowBase64\}\}/g, ''); // 移除占位符
                     } else if (Array.isArray(msg.content)) {
                         for (const part of msg.content) {
                             if (part.type === 'text' && typeof part.text === 'string' && part.text.includes('{{ShowBase64}}')) {
-                                shouldProcessImages = true;
-                                break;
+                                foundPlaceholderInMsg = true;
+                                part.text = part.text.replace(/\{\{ShowBase64\}\}/g, ''); // 移除占位符
+                                // 假设一个消息中占位符只出现一次或移除第一个即可
                             }
                         }
                     }
                 }
-                if (shouldProcessImages) break;
+                if (foundPlaceholderInMsg) {
+                    shouldProcessImages = false; // 检测到占位符，禁用图片处理
+                    console.log('[ImageProcessing] 检测到 {{ShowBase64}} 禁用占位符。');
+                    break; // 找到一个就足以禁用，停止检查其他消息
+                }
             }
         }
         // --- 新逻辑结束 ---
 
         // --- 图片转译和缓存处理 (根据 shouldProcessImages 开关决定是否执行) ---
         if (shouldProcessImages) {
-            console.log('[ImageProcessing] 功能已启用 (检测到 {{ShowBase64}})，开始处理图片...');
+            console.log('[ImageProcessing] 功能已启用 (未检测到 {{ShowBase64}} 禁用占位符)，开始处理图片...');
             if (originalBody.messages && Array.isArray(originalBody.messages)) {
                 // 图片处理逻辑主要针对用户消息中的图片部分
                 for (let i = 0; i < originalBody.messages.length; i++) {
@@ -817,7 +823,6 @@ app.post('/v1/chat/completions', async (req, res) => {
                         if (imagePartsToTranslate.length > 0) {
                             const allTranslatedImageTexts = [];
                             console.log(`[ImageAsync] 准备处理 ${imagePartsToTranslate.length} 张图片，并发上限: ${imageModelAsynchronousLimit}`);
-                            // 使用不同的循环变量名 (j) 避免与外部循环变量 (i) 冲突
                             for (let j = 0; j < imagePartsToTranslate.length; j += imageModelAsynchronousLimit) {
                                 const chunkToTranslate = imagePartsToTranslate.slice(j, j + imageModelAsynchronousLimit);
                                 console.log(`[ImageAsync] 处理批次: ${Math.floor(j / imageModelAsynchronousLimit) + 1}, 图片数量: ${chunkToTranslate.length}`);
@@ -839,25 +844,11 @@ app.post('/v1/chat/completions', async (req, res) => {
                         }
                     }
                 }
-                
-                // 图片处理完成后，从所有消息中移除 {{ShowBase64}} 占位符
-                for (const msg of originalBody.messages) {
-                    if (msg.role === 'user' || msg.role === 'system') {
-                        if (typeof msg.content === 'string') {
-                            msg.content = msg.content.replace(/\{\{ShowBase64\}\}/g, '');
-                        } else if (Array.isArray(msg.content)) {
-                            for (const part of msg.content) {
-                                if (part.type === 'text' && typeof part.text === 'string') {
-                                    part.text = part.text.replace(/\{\{ShowBase64\}\}/g, '');
-                                }
-                            }
-                        }
-                    }
-                }
             }
             console.log('[ImageProcessing] 图片处理完成。');
         } else {
-            console.log('[ImageProcessing] 功能已禁用 (未检测到 {{ShowBase64}})，跳过图片转译和缓存处理。');
+            // 如果 shouldProcessImages 为 false，占位符已在检测阶段被移除
+            console.log('[ImageProcessing] 功能已禁用 (检测到 {{ShowBase64}} 禁用占位符)，跳过图片转译和缓存处理。');
         }
         // --- 图片转译和缓存处理结束 ---
 
