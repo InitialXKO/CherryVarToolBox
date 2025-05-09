@@ -47,7 +47,6 @@
 *   `WeatherModel`: 用于获取天气的后端 API 模型名称。
 *   `WeatherPrompt`: 获取天气时发送给模型的提示语模板 (支持 `{{Date}}`, `{{VarCity}}` 变量)。
 *   `WeatherModelMaxTokens`: 天气模型请求的 `max_tokens` 值。
-*   `Base64Cache`: 布尔值 (True/False)，用于启用或禁用 Base64 图片转译和缓存功能。默认为 True。
 *   `ImageModel`: 用于图片转译的多模态模型名称。
 *   `ImagePrompt`: 指导图片转译模型工作的提示文本。
 *   `ImageModelOutput`: 图片识别模型请求中 `max_tokens` 的值 (默认为 `1024`)。
@@ -169,6 +168,7 @@ npm install
 *   `{{角色名日记本}}`: 指定角色存储的所有日记内容 (例如 `{{小克日记本}}`)。
 *   `{{VarHttpUrl}}`, `{{VarHttpsUrl}}`, `{{VarDdnsUrl}}`: `config.env` 中定义的对应 URL 值。
 *   `{{Image_Key}}`: `config.env` 中定义的 `Image_Key` 值，主要用于在提示词中构建图片URL。
+*   `{{ShowBase64}} `: 当传递该占位符到系统提示词时，图像缓存识别系统将暂时关闭。
 
 **注意**: 系统提示词转换、全局上下文转换和图片转译（如果 `Base64Cache=True`）是自动进行的，不需要特定变量来触发。
 
