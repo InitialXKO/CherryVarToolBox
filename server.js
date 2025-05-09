@@ -109,7 +109,7 @@ const port = process.env.PORT; // 从 env 或默认值获取端口
 const apiKey = process.env.API_Key; // API 服务器密钥
 const apiUrl = process.env.API_URL; // API 服务器地址
 const serverKey = process.env.Key; // 中间层认证密钥
-const weatherInfoPath = process.env.VarWeatherInfo || 'Weather.txt'; // 从 config.env 读取 VarWeatherInfo
+const weatherInfoPath = process.env.WeatherInfo || 'Weather.txt'; // 从 config.env 读取 WeatherInfo
 const weatherModel = process.env.WeatherModel;
 const weatherPromptTemplate = process.env.WeatherPrompt; // WeatherPrompt 内部已使用 {{VarCity}}
 
@@ -387,157 +387,177 @@ async function fetchAndUpdateWeather() {
         return;
     }
 
-    try {
-        // 使用 replaceCommonVariables 来处理模板中的所有已知变量，包括 {{Date}} 和 {{VarCity}}
-        let prompt = await replaceCommonVariables(weatherPromptTemplate);
+    const maxRetries = 3;
+    let attempt = 0;
+    let lastError = null;
 
-        // 可选：添加日志以确认 prompt 的内容，特别是 VarCity 是否按预期被替换
-        // 检查 VarCity 是否未配置，并且提示中是否包含 "[未配置VarCity]"
-        if (process.env.VarCity === undefined && prompt.includes('[未配置VarCity]')) {
-            console.log(`[WeatherFetch] VarCity is not configured. Placeholder '[未配置VarCity]' is present in prompt as expected after replaceCommonVariables.`);
-        }
-        // 检查 VarCity 是否已配置，并且提示中不再包含 "{{VarCity}}" 或 "[未配置VarCity]"
-        else if (process.env.VarCity !== undefined && !prompt.includes('{{VarCity}}') && !prompt.includes('[未配置VarCity]')) {
-            console.log(`[WeatherFetch] VarCity (${process.env.VarCity}) appears to be correctly replaced in prompt by replaceCommonVariables. Prompt (first 100 chars): "${prompt.substring(0,100)}..."`);
-        }
-        // 检查 VarCity 是否已配置，但提示中仍然存在占位符或 "未配置" 提示 (异常情况)
-        else if (process.env.VarCity !== undefined && (prompt.includes('{{VarCity}}') || prompt.includes('[未配置VarCity]'))) {
-            // This case implies VarCity is defined, but the prompt still shows it as a placeholder or "not configured".
-            // This could happen if replaceCommonVariables failed to replace it, or if VarCity's value itself is "{{VarCity}}" or "[未配置VarCity]".
-            console.warn(`[WeatherFetch] Warning: VarCity (${process.env.VarCity}) might NOT have been properly replaced or its value is problematic. Prompt still contains '{{VarCity}}' or '[未配置VarCity]'. Prompt (first 100 chars): "${prompt.substring(0,100)}..."`);
-        }
-        // 检查 VarCity 是否未配置，但提示中也不包含 "[未配置VarCity]" 或 "{{VarCity}}" (可能是一个空的 VarCity 值被替换了, 或者模板中就没有VarCity)
-        else if (process.env.VarCity === undefined && !prompt.includes('[未配置VarCity]') && !prompt.includes('{{VarCity}}')) {
-             console.log(`[WeatherFetch] VarCity is not configured, and placeholder '[未配置VarCity]' or '{{VarCity}}' is NOT in prompt. This is okay if VarCity was an empty string or not in template. Prompt (first 100 chars): "${prompt.substring(0,100)}..."`);
-        }
+    while (attempt < maxRetries) {
+        attempt++;
+        console.log(`[WeatherFetch] 尝试获取天气信息 #${attempt}`);
+        try {
+            // 使用 replaceCommonVariables 来处理模板中的所有已知变量，包括 {{Date}} 和 {{VarCity}}
+            let prompt = await replaceCommonVariables(weatherPromptTemplate);
 
-        // --- First API Call ---
-        const weatherModelMaxTokens = parseInt(process.env.WeatherModelMaxTokens, 10); // 读取配置
-        const firstApiPayload = {
-            model: weatherModel,
-            // 使用在 fetchAndUpdateWeather 内部直接替换处理后的 prompt
-            messages: [{ role: 'user', content: prompt }],
-            tools: [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "google_search",
-                        "description": "Perform a Google search to find information on the web.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "The search query."
-                                }
-                            },
-                            "required": ["query"]
+            // 可选：添加日志以确认 prompt 的内容，特别是 VarCity 是否按预期被替换
+            if (process.env.VarCity === undefined && prompt.includes('[未配置VarCity]')) {
+                console.log(`[WeatherFetch] VarCity 未配置，占位符 '[未配置VarCity]' 按预期存在于提示中。`);
+            } else if (process.env.VarCity !== undefined && !prompt.includes('{{VarCity}}') && !prompt.includes('[未配置VarCity]')) {
+                console.log(`[WeatherFetch] VarCity (${process.env.VarCity}) 似乎已正确替换。提示 (前100字符): "${prompt.substring(0,100)}..."`);
+            } else if (process.env.VarCity !== undefined && (prompt.includes('{{VarCity}}') || prompt.includes('[未配置VarCity]'))) {
+                console.warn(`[WeatherFetch] 警告: VarCity (${process.env.VarCity}) 可能未正确替换。提示仍包含 '{{VarCity}}' 或 '[未配置VarCity]'。提示 (前100字符): "${prompt.substring(0,100)}..."`);
+            } else if (process.env.VarCity === undefined && !prompt.includes('[未配置VarCity]') && !prompt.includes('{{VarCity}}')) {
+                 console.log(`[WeatherFetch] VarCity 未配置，且提示中不含占位符。提示 (前100字符): "${prompt.substring(0,100)}..."`);
+            }
+
+            // --- First API Call ---
+            const weatherModelMaxTokens = parseInt(process.env.WeatherModelMaxTokens, 10);
+            const firstApiPayload = {
+                model: weatherModel,
+                messages: [{ role: 'user', content: prompt }],
+                tools: [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "google_search",
+                            "description": "Perform a Google search to find information on the web.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "The search query."
+                                    }
+                                },
+                                "required": ["query"]
+                            }
                         }
                     }
-                }
-            ],
-            tool_choice: "auto"
-        };
-
-        if (weatherModelMaxTokens && !isNaN(weatherModelMaxTokens) && weatherModelMaxTokens > 0) {
-            firstApiPayload.max_tokens = weatherModelMaxTokens;
-            console.log(`[WeatherFetch] 第一次天气 API 调用使用 MaxTokens: ${weatherModelMaxTokens}`);
-        }
-
-        let response = await fetch(`${apiUrl}/v1/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify(firstApiPayload),
-        });
-
-        if (!response.ok) {
-            throw new Error(`第一次天气 API 调用失败: ${response.status} ${response.statusText}`);
-        }
-
-        let data = await response.json();
-        
-        const firstChoice = data.choices?.[0];
-        const message = firstChoice?.message;
-
-        // --- Check for Tool Calls ---
-        if (firstChoice?.finish_reason === 'tool_calls' && message?.tool_calls) {
-            const toolCalls = message.tool_calls;
-
-            // Prepare messages for the second API call
-            const messagesForSecondCall = [
-                { role: 'user', content: prompt }, // Original user prompt
-                message, // Assistant's message requesting tool call(s)
-            ];
-
-            // Add tool results (we assume the proxy handles execution, send back arguments as placeholder result)
-            for (const toolCall of toolCalls) {
-                 if (toolCall.type === 'function' && toolCall.function.name === 'google_search') {
-                     messagesForSecondCall.push({
-                         role: 'tool',
-                         tool_call_id: toolCall.id,
-                         // Since server.js doesn't execute the search, we send back the arguments
-                         // The proxy at localhost:3000 should ideally use this or have already executed it.
-                         content: `Tool call requested with arguments: ${toolCall.function.arguments}`,
-                     });
-                 }
-            }
-
-            // --- Second API Call ---
-            const secondApiPayload = {
-                model: weatherModel,
-                messages: messagesForSecondCall,
+                ],
+                tool_choice: "auto"
             };
 
-            // weatherModelMaxTokens is defined at the top of fetchAndUpdateWeather
             if (weatherModelMaxTokens && !isNaN(weatherModelMaxTokens) && weatherModelMaxTokens > 0) {
-                secondApiPayload.max_tokens = weatherModelMaxTokens;
-                console.log(`[WeatherFetch] 第二次天气 API 调用使用 MaxTokens: ${weatherModelMaxTokens}`);
+                firstApiPayload.max_tokens = weatherModelMaxTokens;
+                console.log(`[WeatherFetch] 第一次天气 API 调用 (尝试 ${attempt}) 使用 MaxTokens: ${weatherModelMaxTokens}`);
             }
 
-            response = await fetch(`${apiUrl}/v1/chat/completions`, {
+            let response = await fetch(`${apiUrl}/v1/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`,
                 },
-                // Send the history including the tool call request and our constructed tool result
-                // DO NOT send 'tools' or 'tool_choice' in the second call
-                body: JSON.stringify(secondApiPayload),
+                body: JSON.stringify(firstApiPayload),
             });
 
             if (!response.ok) {
-                throw new Error(`第二次天气 API 调用失败: ${response.status} ${response.statusText}`);
+                const errorText = await response.text();
+                throw new Error(`第一次天气 API 调用失败 (尝试 ${attempt}): ${response.status} ${response.statusText} - ${errorText}`);
             }
 
-            data = await response.json();
-        } else {
-        }
+            let data = await response.json();
+            const firstChoice = data.choices?.[0];
+            const message = firstChoice?.message;
 
-        // --- Process Final Response ---
-        let weatherContent = data.choices?.[0]?.message?.content || '';
-        console.log('Final extracted content:', weatherContent); // Keep log for final content
+            // --- Check for Tool Calls ---
+            if (firstChoice?.finish_reason === 'tool_calls' && message?.tool_calls) {
+                console.log(`[WeatherFetch] 检测到工具调用 (尝试 ${attempt})，准备第二次 API 调用...`);
+                const toolCalls = message.tool_calls;
+                const messagesForSecondCall = [
+                    { role: 'user', content: prompt },
+                    message,
+                ];
 
-        const match = weatherContent.match(/\[WeatherInfo:(.*?)\]/s); // 使用 s 标志使 . 匹配换行符
-        if (match && match[1]) {
-            cachedWeatherInfo = match[1].trim();
-            console.log('天气信息已更新并缓存。');
-            try {
-                await fs.writeFile(weatherInfoPath, cachedWeatherInfo);
-                console.log(`天气信息已写入 ${weatherInfoPath}`);
-            } catch (writeError) {
-                console.error(`写入天气文件 ${weatherInfoPath} 失败:`, writeError);
+                for (const toolCall of toolCalls) {
+                     if (toolCall.type === 'function' && toolCall.function.name === 'google_search') {
+                         messagesForSecondCall.push({
+                             role: 'tool',
+                             tool_call_id: toolCall.id,
+                             content: `Tool call requested with arguments: ${toolCall.function.arguments}`,
+                         });
+                     }
+                }
+
+                const secondApiPayload = {
+                    model: weatherModel,
+                    messages: messagesForSecondCall,
+                };
+
+                if (weatherModelMaxTokens && !isNaN(weatherModelMaxTokens) && weatherModelMaxTokens > 0) {
+                    secondApiPayload.max_tokens = weatherModelMaxTokens;
+                    console.log(`[WeatherFetch] 第二次天气 API 调用 (尝试 ${attempt}) 使用 MaxTokens: ${weatherModelMaxTokens}`);
+                }
+
+                response = await fetch(`${apiUrl}/v1/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                    },
+                    body: JSON.stringify(secondApiPayload),
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`第二次天气 API 调用失败 (尝试 ${attempt}): ${response.status} ${response.statusText} - ${errorText}`);
+                }
+                data = await response.json();
             }
-        } else {
-            console.warn('从 API 返回结果中未能提取到 [WeatherInfo:...] 格式的天气信息。原始返回:', weatherContent);
-            cachedWeatherInfo = '未能从API获取有效天气信息';
+
+            // --- Process Final Response ---
+            let weatherContent = data.choices?.[0]?.message?.content || '';
+            console.log(`[WeatherFetch] 尝试 #${attempt} 后提取到的内容 (前500字符):`, weatherContent.substring(0, 500) + (weatherContent.length > 500 ? "..." : ""));
+
+            const weatherInfoMatch = weatherContent.match(/\[WeatherInfo:(.*?)\]/s);
+            const successMarker = "[天气信息检索成功]"; // 从 config.env 的 WeatherPrompt 得知
+
+            if (weatherInfoMatch && weatherInfoMatch[1] && weatherContent.includes(successMarker)) {
+                // 成功条件：同时找到 WeatherInfo 块和成功标记
+                const extractedInfo = weatherInfoMatch[1].trim();
+                // 通常成功标记在 WeatherInfo 块之外，但为保险起见，如果它意外地在内部，也清理掉
+                // 不过，根据 WeatherPrompt，它应该在回复末尾，所以主要依赖 .includes(successMarker) 对整体 weatherContent 的判断
+                cachedWeatherInfo = extractedInfo;
+                console.log(`[WeatherFetch] 天气信息已成功更新并缓存 (尝试 #${attempt})。检测到成功标记。`);
+                try {
+                    await fs.writeFile(weatherInfoPath, cachedWeatherInfo);
+                    console.log(`[WeatherFetch] 天气信息已写入 ${weatherInfoPath}`);
+                } catch (writeError) {
+                    console.error(`[WeatherFetch] 写入天气文件 ${weatherInfoPath} 失败:`, writeError);
+                }
+                return; // 成功获取并满足条件，退出函数
+            } else if (weatherInfoMatch && weatherInfoMatch[1] && !weatherContent.includes(successMarker)) {
+                // 找到了 WeatherInfo 块，但没有成功标记
+                lastError = new Error(`提取到天气信息，但缺少成功标记 "${successMarker}" (尝试 ${attempt})。内容 (前200字符): ${weatherContent.substring(0,200)}...`);
+                console.warn(`[WeatherFetch] ${lastError.message}`);
+            } else if (!weatherInfoMatch) {
+                // 未能提取到 WeatherInfo 块
+                lastError = new Error(`从 API 返回结果中未能提取到 [WeatherInfo:...] 格式的天气信息 (尝试 ${attempt})。内容 (前200字符): ${weatherContent.substring(0,200)}...`);
+                console.warn(`[WeatherFetch] ${lastError.message}`);
+            } else {
+                // 其他意外情况 (理论上不太可能进入此分支)
+                lastError = new Error(`未知的提取问题或不满足成功条件 (尝试 ${attempt})。内容 (前200字符): ${weatherContent.substring(0,200)}...`);
+                console.warn(`[WeatherFetch] ${lastError.message}`);
+            }
+        } catch (error) {
+            lastError = error; // API 调用本身的错误或解析错误
+            console.error(`[WeatherFetch] 获取或处理天气信息时出错 (尝试 #${attempt}):`, error.message);
         }
 
-    } catch (error) {
-        console.error('获取或处理天气信息时出错:', error);
-        cachedWeatherInfo = `获取天气信息时出错: ${error.message}`;
+        if (attempt < maxRetries) {
+            console.log(`[WeatherFetch] 天气信息获取将在500ms后重试...`);
+            await new Promise(resolve => setTimeout(resolve, 500)); // 延迟500ms
+        }
+    }
+
+    // 如果所有尝试都失败了
+    console.error(`[WeatherFetch] 在 ${maxRetries} 次尝试后未能成功获取有效的天气信息。最后错误: ${lastError ? lastError.message : '未知错误'}`);
+    cachedWeatherInfo = `获取天气信息在 ${maxRetries} 次尝试后失败: ${lastError ? lastError.message.substring(0,100) : '未知错误'}...`;
+    // 即使失败，也尝试写入错误信息到文件，以便外部系统知晓状态
+    try {
+        await fs.writeFile(weatherInfoPath, cachedWeatherInfo);
+        console.log(`[WeatherFetch] 已将获取失败的状态写入 ${weatherInfoPath}`);
+    } catch (writeError) {
+        console.error(`[WeatherFetch] 写入天气获取失败状态到 ${weatherInfoPath} 时出错:`, writeError);
     }
 }
 
